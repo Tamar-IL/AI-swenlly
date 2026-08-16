@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 9 — Council synthesis / Mixture-of-Agents (2026-08-16)
+- Upgraded council from side-by-side stub to real MoA: after the N candidates answer, the strong model acts as AGGREGATOR and fuses them into one better answer. UI leads with "★ Conductor's synthesis" (its own receipt) and shows the candidates below as "the sources". This is the founder's named v2 headline ("a synthesizer FUSES them into one better answer").
+- Cost integrity kept: synthesis is charged to the session ledger and included in the up-front cap pre-flight (now N+1 calls); `synthesize:false` opts out. Offline the aggregator is the mock; with a real provider it genuinely fuses.
+- Verified: 57 tests pass (added synthesis + skip + budget tests); eval still 🟢 GO; build clean; screenshot confirms synthesis-led council layout. Next (task #10): real provider+judge run, streaming.
+
 ## Chunk 8 — Markdown + code rendering in answers (2026-08-16)
 - Built a dependency-free markdown renderer (lib/markdown/parse.ts pure parser + components/Markdown.tsx): fenced code blocks with a language + copy header, headings, ordered/unordered lists, and inline code/bold/italic/links. Wired into assistant messages + council columns (user messages stay plain). Closes the critic's "a coding product can't render code" gap.
 - XSS-safe by construction: emits React elements, never dangerouslySetInnerHTML; link hrefs sanitized (javascript:/data: rejected) — per the trust-safety standing rule. 6 new parser tests incl. the XSS cases.

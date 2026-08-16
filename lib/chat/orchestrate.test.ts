@@ -64,14 +64,25 @@ describe('council', () => {
     }
   });
 
-  it('charges every council member against the session ledger', async () => {
-    const r = await council({ prompt: 'explain recursion', sessionId: 'c2', provider, catalog: MOCK_CATALOG, capUsd: 1 });
-    const expected = r.answers.reduce((s, a) => s + a.receipt.costUsd, 0);
+  it('synthesizes a fused answer from the strong model and charges it', async () => {
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c-syn', provider, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.synthesis).toBeDefined();
+    expect(r.synthesis!.answer).toBeTruthy();
+    expect(r.synthesis!.receipt.tier).toBe('strong'); // aggregator = strong model
+    expect(r.synthesis!.receipt.reason).toMatch(/mixture-of-agents/i);
+    // Session spend includes members + synthesis.
+    const expected = r.answers.reduce((s, a) => s + a.receipt.costUsd, 0) + r.synthesis!.receipt.costUsd;
     expect(r.session.spentUsd).toBeCloseTo(expected, 8);
-    expect(r.session.spentUsd).toBeGreaterThan(0);
   });
 
-  it('blocks the whole fan-out when it would exceed the remaining budget', async () => {
+  it('can skip synthesis when asked (side-by-side only)', async () => {
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c-nosyn', provider, catalog: MOCK_CATALOG, capUsd: 1, synthesize: false });
+    expect(r.synthesis).toBeUndefined();
+    const expected = r.answers.reduce((s, a) => s + a.receipt.costUsd, 0);
+    expect(r.session.spentUsd).toBeCloseTo(expected, 8);
+  });
+
+  it('blocks the whole fan-out (incl. synthesis) when it would exceed the remaining budget', async () => {
     const r = await council({ prompt: 'explain recursion', sessionId: 'c3', provider, catalog: MOCK_CATALOG, capUsd: 0.0000001 });
     expect(r.blocked).toBe(true);
     expect(r.answers).toHaveLength(0);

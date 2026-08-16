@@ -104,10 +104,10 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
 }
 
 /**
- * Council mode (v1 stub): ask one model per tier and return the answers side by
- * side. No fusion/synthesis yet — that's the v2 headline. Council IS metered: every
- * member call is charged against the session cap, and the whole fan-out is refused
- * up front if it can't fit the remaining budget (it costs N× a normal turn).
+ * Council mode (Mixture-of-Agents): ask one model per tier, then a SYNTHESIZER (the
+ * strong model as aggregator) fuses the candidates into one better answer. Both the
+ * member calls AND the synthesis are metered against the session cap, and the whole
+ * thing is refused up front if it can't fit the remaining budget (it costs N+1 calls).
  */
 export interface CouncilAnswer {
   answer: string;
@@ -116,7 +116,10 @@ export interface CouncilAnswer {
 
 export interface CouncilResult {
   blocked: boolean;
+  /** The per-model candidate answers (the "many minds"). */
   answers: CouncilAnswer[];
+  /** The fused answer (the "one answer"), present unless synthesis was skipped. */
+  synthesis?: CouncilAnswer;
   session: { spentUsd: number; capUsd: number; remainingUsd: number };
   message?: string;
 }
@@ -128,20 +131,28 @@ export async function council(input: {
   provider?: ModelProvider;
   catalog?: ModelInfo[];
   capUsd?: number;
+  /** Set false to get side-by-side candidates without the fusion step. */
+  synthesize?: boolean;
 }): Promise<CouncilResult> {
   const provider = input.provider ?? getProvider();
   const catalog = input.catalog ?? getCatalog();
   const capUsd = input.capUsd ?? sessionCapUsd();
   const baseline = baselineModel(catalog);
   const history = input.history ?? [];
+  const doSynthesis = input.synthesize !== false;
   const messages: ChatMessage[] = [...history, { role: 'user', content: input.prompt }];
 
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
 
-  // Pre-flight: the whole fan-out priced at max output must fit the remaining budget.
+  // Pre-flight: N member calls + (optionally) the synthesis call, priced at max output.
   const inputTokens = estimateMessagesTokens(messages.map((m) => m.content));
-  const projected = catalog.reduce((sum, m) => sum + costOf(m, inputTokens, MAX_OUTPUT_TOKENS), 0);
+  let projected = catalog.reduce((sum, m) => sum + costOf(m, inputTokens, MAX_OUTPUT_TOKENS), 0);
+  if (doSynthesis) {
+    // The synthesizer's prompt carries the question + all candidate answers (each up to MAX).
+    const synthInput = inputTokens + catalog.length * MAX_OUTPUT_TOKENS;
+    projected += costOf(baseline, synthInput, MAX_OUTPUT_TOKENS);
+  }
   if (projected > remainingUsd) {
     return {
       blocked: true,
@@ -171,15 +182,56 @@ export async function council(input: {
   let newSpent = spentUsd;
   for (const a of answers) newSpent = addSessionSpend(input.sessionId, a.receipt.costUsd);
 
+  // Synthesis: the strong model fuses the candidates into one better answer.
+  let synthesis: CouncilAnswer | undefined;
+  if (doSynthesis) {
+    synthesis = await synthesizeAnswers({ prompt: input.prompt, answers, provider, baseline });
+    newSpent = addSessionSpend(input.sessionId, synthesis.receipt.costUsd);
+  }
+
   return {
     blocked: false,
     answers,
+    synthesis,
     session: {
       spentUsd: round(newSpent, 8),
       capUsd,
       remainingUsd: round(Math.max(0, capUsd - newSpent), 8),
     },
   };
+}
+
+/**
+ * The Mixture-of-Agents aggregator: the strong model reads all candidate answers and
+ * produces one consolidated answer. Offline the aggregator is the Mock; with a real
+ * provider it genuinely fuses. Its cost is a real receipt charged to the session.
+ */
+async function synthesizeAnswers(params: {
+  prompt: string;
+  answers: CouncilAnswer[];
+  provider: ModelProvider;
+  baseline: ModelInfo;
+}): Promise<CouncilAnswer> {
+  const { prompt, answers, provider, baseline } = params;
+  const fusion =
+    `Synthesize the single best answer to: "${prompt}"\n\n` +
+    `Candidate answers from ${answers.length} models:\n` +
+    answers.map((a, i) => `[${i + 1}] ${a.answer}`).join('\n\n') +
+    `\n\nProduce one consolidated, higher-quality answer that combines their strengths.`;
+
+  const gen = await provider.generate({
+    model: baseline,
+    messages: [{ role: 'user', content: fusion }],
+    maxTokens: MAX_OUTPUT_TOKENS,
+  });
+  const receipt = buildReceipt({
+    model: baseline,
+    baseline,
+    inputTokens: safeTokenCount(gen.inputTokens),
+    outputTokens: safeTokenCount(gen.outputTokens),
+    reason: `Synthesized from ${answers.length} models (Mixture-of-Agents).`,
+  });
+  return { answer: gen.text, receipt };
 }
 
 function formatUsd(n: number): string {
