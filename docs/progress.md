@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 6 — CI gate (2026-08-16)
+- Added .github/workflows/ci.yml: runs typecheck + 50 unit tests + the offline go/no-go eval (exits non-zero on NO-GO) + production build on every push/PR — all zero-key. This was the eval-engineer gate's top process finding ("no CI → a router change can silently break the bet"); now a routing/catalog/cost change that breaks the founder's bet fails CI.
+- Verified locally with the exact CI commands (npm ci, typecheck, test, eval, build) — all green; eval still 🟢 GO. Eval report uploaded as a CI artifact.
+- Next (task #10): real paid-catalog + LLM-judge run, durable KV ledger + global cap, moderation, README run instructions, streaming/markdown.
+
 ## Chunk 5 — Eval honesty + router hardening (2026-08-16)
 - Reframed the go/no-go gate honestly: the judge now READS the answer (drops to 0 on empty/degenerate — guard test proves it), the harness reports ROUTING ACCURACY separately (100%, incl. 4 adversarial cases the old router misrouted), added a worst-case quality floor, and the banner/report now say "simulated judge · illustrative prices · real-quality validation pending" instead of claiming proven quality. Judge interface is now async + blind + reference-ready for a real LLM-judge drop-in.
 - Hardened the rules-based router: weak tech keywords (git/api/sql) need corroboration to escalate; complexity terms (complexity/equilibrium/theorem) escalate hidden-hard questions; added adversarial regression fixtures. Receipt savings labeled "vs. always using the strong model".
