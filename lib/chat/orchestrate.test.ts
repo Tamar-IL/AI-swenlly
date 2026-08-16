@@ -3,9 +3,32 @@ import { orchestrate, council } from './orchestrate';
 import { MockProvider } from '../providers/mock';
 import { MOCK_CATALOG } from '../providers/catalog';
 import { resetAllSessions } from '../cost/session';
+import type { GenerateRequest, ModelProvider } from '../providers/types';
 
 const provider = new MockProvider();
 const base = { provider, catalog: MOCK_CATALOG, capUsd: 0.05 };
+
+/** A provider that fails selectively, to exercise council's resilience paths. */
+class FaultProvider implements ModelProvider {
+  readonly name = 'mock';
+  private mock = new MockProvider();
+  constructor(private opts: { failModelId?: string; failOnSynthesis?: boolean } = {}) {}
+  available() {
+    return true;
+  }
+  models() {
+    return MOCK_CATALOG;
+  }
+  async generate(req: GenerateRequest) {
+    if (this.opts.failModelId && req.model.id === this.opts.failModelId) {
+      throw new Error('member failed');
+    }
+    if (this.opts.failOnSynthesis && req.messages.some((m) => m.content.includes('Synthesize the single best answer'))) {
+      throw new Error('synthesis failed');
+    }
+    return this.mock.generate(req);
+  }
+}
 
 beforeEach(() => resetAllSessions());
 
@@ -82,10 +105,39 @@ describe('council', () => {
     expect(r.session.spentUsd).toBeCloseTo(expected, 8);
   });
 
-  it('blocks the whole fan-out (incl. synthesis) when it would exceed the remaining budget', async () => {
+  it('blocks the whole fan-out when it cannot even afford the members', async () => {
     const r = await council({ prompt: 'explain recursion', sessionId: 'c3', provider, catalog: MOCK_CATALOG, capUsd: 0.0000001 });
     expect(r.blocked).toBe(true);
     expect(r.answers).toHaveLength(0);
     expect(r.message).toMatch(/council/i);
+  });
+
+  it('never charges beyond the cap, at any cap (synthesis gated on actual cost)', async () => {
+    const probe = await council({ prompt: 'explain recursion', sessionId: 'inv-a', provider, catalog: MOCK_CATALOG, capUsd: 1 });
+    const full = probe.session.spentUsd; // members + synthesis
+    for (const cap of [full * 0.3, full * 0.8, full * 1.2, full * 5]) {
+      resetAllSessions();
+      const r = await council({ prompt: 'explain recursion', sessionId: 'inv', provider, catalog: MOCK_CATALOG, capUsd: cap });
+      expect(r.session.spentUsd).toBeLessThanOrEqual(cap + 1e-9);
+    }
+  });
+
+  it('survives a flaky council member (allSettled), charging only survivors', async () => {
+    const flaky = new FaultProvider({ failModelId: 'mock-mid' });
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c-flaky', provider: flaky, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.blocked).toBe(false);
+    expect(r.answers).toHaveLength(MOCK_CATALOG.length - 1); // mid failed
+    expect(r.answers.some((a) => a.receipt.modelId === 'mock-mid')).toBe(false);
+  });
+
+  it('returns the paid-for answers if synthesis fails (no synthesis charge)', async () => {
+    const failSynth = new FaultProvider({ failOnSynthesis: true });
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c-synthfail', provider: failSynth, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.blocked).toBe(false);
+    expect(r.answers).toHaveLength(MOCK_CATALOG.length);
+    expect(r.synthesis).toBeUndefined();
+    expect(r.message).toMatch(/synthesis failed/i);
+    const memberCost = r.answers.reduce((s, a) => s + a.receipt.costUsd, 0);
+    expect(r.session.spentUsd).toBeCloseTo(memberCost, 8); // synthesis not charged
   });
 });

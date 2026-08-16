@@ -12,7 +12,7 @@ import { usd } from '@/lib/format';
 
 type Item =
   | { kind: 'msg'; turn: ChatTurn }
-  | { kind: 'council'; id: string; answers: CouncilAnswer[]; synthesis?: CouncilAnswer };
+  | { kind: 'council'; id: string; answers: CouncilAnswer[]; synthesis?: CouncilAnswer; note?: string };
 
 function newId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -147,7 +147,7 @@ export default function Home() {
       if (data.blocked) {
         setCapped(data.message ?? 'Session cost cap reached.');
       } else if (data.answers?.length) {
-        setItems((prev) => [...prev, { kind: 'council', id: newId(), answers: data.answers, synthesis: data.synthesis }]);
+        setItems((prev) => [...prev, { kind: 'council', id: newId(), answers: data.answers, synthesis: data.synthesis, note: data.message }]);
       }
       if (data.session) {
         setSpent(data.session.spentUsd);
@@ -227,7 +227,7 @@ export default function Home() {
                   it.kind === 'msg' ? (
                     <Message key={it.turn.id} turn={it.turn} />
                   ) : (
-                    <Council key={it.id} answers={it.answers} synthesis={it.synthesis} />
+                    <Council key={it.id} answers={it.answers} synthesis={it.synthesis} note={it.note} />
                   ),
                 )}
               </div>

@@ -25,7 +25,10 @@ export type Block =
   | { type: 'ol'; items: Inline[][] }
   | { type: 'p'; inline: Inline[] };
 
-const FENCE_RE = /^```(\w*)\s*$/;
+// Fences use a variable number of backticks (≥3); a block closes only on a line of
+// AT LEAST as many backticks, so an outer ````-fence can contain an inner ```-fence.
+const FENCE_OPEN_RE = /^(`{3,})(\w*)\s*$/;
+const FENCE_LINE_RE = /^`{3,}/;
 const HEADING_RE = /^(#{1,3})\s+(.*)$/;
 const UL_RE = /^[-*]\s+(.*)$/;
 const OL_RE = /^\d+\.\s+(.*)$/;
@@ -38,13 +41,15 @@ export function parseMarkdown(input: string): Block[] {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block.
-    const fence = line.match(FENCE_RE);
+    // Fenced code block (variable-length fence; closes on ≥ as many backticks).
+    const fence = line.match(FENCE_OPEN_RE);
     if (fence) {
-      const lang = fence[1] || '';
+      const ticks = fence[1].length;
+      const lang = fence[2] || '';
+      const closeRe = new RegExp('^`{' + ticks + ',}\\s*$');
       const body: string[] = [];
       i++;
-      while (i < lines.length && !FENCE_RE.test(lines[i])) {
+      while (i < lines.length && !closeRe.test(lines[i])) {
         body.push(lines[i]);
         i++;
       }
@@ -95,7 +100,7 @@ export function parseMarkdown(input: string): Block[] {
     while (
       i < lines.length &&
       lines[i].trim() !== '' &&
-      !FENCE_RE.test(lines[i]) &&
+      !FENCE_LINE_RE.test(lines[i]) &&
       !HEADING_RE.test(lines[i]) &&
       !UL_RE.test(lines[i]) &&
       !OL_RE.test(lines[i])
@@ -110,7 +115,12 @@ export function parseMarkdown(input: string): Block[] {
 }
 
 // Inline: `code` | [text](href) | **bold** | *italic*
-const INLINE_RE = /`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
+// Every negated class is LENGTH-BOUNDED so a pathological input (e.g. many "[x](" with
+// no closing ")") stays linear instead of O(n²) scanning to end-of-string each time.
+// The href is greedy-then-backtrack so a URL with balanced parens (Wikipedia-style)
+// keeps its trailing ")" instead of truncating.
+const INLINE_RE =
+  /`([^`]{1,2048})`|\[([^\]\n]{1,200})\]\(([^\s]{1,2048})\)|\*\*([^*\n]{1,500})\*\*|\*([^*\n]{1,500})\*/g;
 
 export function parseInline(text: string): Inline[] {
   const out: Inline[] = [];
@@ -137,9 +147,13 @@ export function parseInline(text: string): Inline[] {
   return out;
 }
 
-/** Allow only http/https/mailto and relative (#, /) hrefs — blocks javascript:, data:, etc. */
+/** Allow only http/https/mailto and same-origin relative (#, /) hrefs — blocks
+ *  javascript:, data:, and protocol-relative "//host" / "/\host" (off-origin) URLs. */
 export function safeHref(raw: string): string | null {
   const href = raw.trim();
+  // Reject protocol-relative and backslash-normalized forms first: //evil.com,
+  // /\evil.com — browsers resolve these off-origin despite the leading "/".
+  if (/^[/\\]{2}/.test(href.replace(/\\/g, '/'))) return null;
   if (href.startsWith('#') || href.startsWith('/')) return href;
   if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href)) return href;
   return null;

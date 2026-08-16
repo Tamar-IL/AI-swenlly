@@ -14,7 +14,15 @@ export interface CouncilAnswer {
  * Council mode (Mixture-of-Agents): the synthesis (one answer) leads, with the
  * per-model candidates (many minds) shown below as the sources it fused.
  */
-export function Council({ answers, synthesis }: { answers: CouncilAnswer[]; synthesis?: CouncilAnswer }) {
+export function Council({
+  answers,
+  synthesis,
+  note,
+}: {
+  answers: CouncilAnswer[];
+  synthesis?: CouncilAnswer;
+  note?: string;
+}) {
   if (!answers.length) return null;
 
   const cheapest = answers.reduce((m, a) => Math.min(m, a.receipt.costUsd), Infinity);
@@ -44,6 +52,13 @@ export function Council({ answers, synthesis }: { answers: CouncilAnswer[]; synt
             <Receipt receipt={synthesis.receipt} />
           </div>
         </div>
+      )}
+
+      {/* Synthesis skipped/failed note (budget or provider error). */}
+      {!synthesis && note && (
+        <p className="mb-3 rounded-sm border border-border bg-surface-sunken px-3 py-2 text-[12px] text-text-secondary">
+          {note}
+        </p>
       )}
 
       {/* The sources — many minds. */}

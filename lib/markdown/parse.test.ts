@@ -43,6 +43,32 @@ describe('parseInline', () => {
   });
 });
 
+describe('parser robustness (code-review findings)', () => {
+  it('keeps balanced parens in a link URL (Wikipedia-style)', () => {
+    const inline = parseInline('see [wiki](https://en.wikipedia.org/wiki/Foo_(bar))');
+    const link = inline.find((n) => n.type === 'link');
+    expect(link).toEqual({ type: 'link', text: 'wiki', href: 'https://en.wikipedia.org/wiki/Foo_(bar)' });
+  });
+
+  it('parses a pathological "[x](" repeat without hanging (bounded, not O(n^2))', () => {
+    const nasty = '[x]('.repeat(20000); // no closing ) anywhere
+    const start = Date.now();
+    const blocks = parseMarkdown(nasty);
+    const ms = Date.now() - start;
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(ms).toBeLessThan(1000); // was multiple seconds before the length bound
+  });
+
+  it('lets a longer outer fence contain an inner ``` fence', () => {
+    const blocks = parseMarkdown('````md\nExample:\n```\ncode\n```\n````');
+    const code = blocks.filter((b) => b.type === 'code');
+    expect(code).toHaveLength(1);
+    if (code[0].type === 'code') {
+      expect(code[0].content).toBe('Example:\n```\ncode\n```');
+    }
+  });
+});
+
 describe('XSS safety', () => {
   it('never emits raw HTML — angle brackets stay literal text', () => {
     const blocks = parseMarkdown('<script>alert(1)</script>');
@@ -50,6 +76,14 @@ describe('XSS safety', () => {
     if (blocks[0].type === 'p') {
       expect(blocks[0].inline).toEqual([{ type: 'text', value: '<script>alert(1)</script>' }]);
     }
+  });
+
+  it('drops protocol-relative and backslash hrefs (off-origin phishing)', () => {
+    expect(safeHref('//evil.com/phish')).toBeNull();
+    expect(safeHref('/\\evil.com')).toBeNull();
+    expect(safeHref('/safe/relative')).toBe('/safe/relative'); // single slash still ok
+    const inline = parseInline('[Verify](//evil.com)');
+    expect(inline.some((n) => n.type === 'link')).toBe(false);
   });
 
   it('drops javascript:/data: link hrefs (renders text only)', () => {

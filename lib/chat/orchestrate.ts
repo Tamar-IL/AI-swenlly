@@ -3,7 +3,7 @@ import { getProvider, getCatalog } from '../providers';
 import { baselineModel } from '../providers/catalog';
 import { route, MAX_OUTPUT_TOKENS } from '../router/router';
 import { buildReceipt, costOf, type Receipt } from '../cost/cost';
-import { estimateMessagesTokens, safeTokenCount } from '../cost/tokens';
+import { estimateMessagesTokens, estimateTokens, safeTokenCount } from '../cost/tokens';
 import { getSessionSpend, addSessionSpend, sessionCapUsd } from '../cost/session';
 
 /**
@@ -145,26 +145,22 @@ export async function council(input: {
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
 
-  // Pre-flight: N member calls + (optionally) the synthesis call, priced at max output.
+  // Pre-flight: refuse if we can't even afford the N member calls (priced at max output).
   const inputTokens = estimateMessagesTokens(messages.map((m) => m.content));
-  let projected = catalog.reduce((sum, m) => sum + costOf(m, inputTokens, MAX_OUTPUT_TOKENS), 0);
-  if (doSynthesis) {
-    // The synthesizer's prompt carries the question + all candidate answers (each up to MAX).
-    const synthInput = inputTokens + catalog.length * MAX_OUTPUT_TOKENS;
-    projected += costOf(baseline, synthInput, MAX_OUTPUT_TOKENS);
-  }
-  if (projected > remainingUsd) {
+  const memberProjected = catalog.reduce((sum, m) => sum + costOf(m, inputTokens, MAX_OUTPUT_TOKENS), 0);
+  if (memberProjected > remainingUsd) {
     return {
       blocked: true,
       answers: [],
       session: { spentUsd, capUsd, remainingUsd },
       message:
-        `Convening the council would cost about ${formatUsd(projected)}, over the remaining ` +
+        `Convening the council would cost about ${formatUsd(memberProjected)}, over the remaining ` +
         `${formatUsd(remainingUsd)} in this session's cap. Start a new session to continue.`,
     };
   }
 
-  const answers = await Promise.all(
+  // Fan out. allSettled so one flaky model doesn't discard the others' answers.
+  const settled = await Promise.allSettled(
     catalog.map(async (model) => {
       const gen = await provider.generate({ model, messages, maxTokens: MAX_OUTPUT_TOKENS });
       const receipt = buildReceipt({
@@ -174,25 +170,52 @@ export async function council(input: {
         outputTokens: safeTokenCount(gen.outputTokens),
         reason: `Council member (${model.tier}).`,
       });
-      return { answer: gen.text, receipt };
+      return { answer: gen.text, receipt } as CouncilAnswer;
     }),
   );
+  const answers: CouncilAnswer[] = settled
+    .filter((s): s is PromiseFulfilledResult<CouncilAnswer> => s.status === 'fulfilled')
+    .map((s) => s.value);
 
-  // Charge every member against the session ledger.
+  if (answers.length === 0) {
+    return {
+      blocked: true,
+      answers: [],
+      session: { spentUsd, capUsd, remainingUsd },
+      message: 'Every council model failed to answer — please retry.',
+    };
+  }
+
+  // Charge only the members that actually answered.
   let newSpent = spentUsd;
   for (const a of answers) newSpent = addSessionSpend(input.sessionId, a.receipt.costUsd);
 
-  // Synthesis: the strong model fuses the candidates into one better answer.
+  // Synthesis: gated on its ACTUAL fusion cost (not the pre-flight heuristic) so it can
+  // never breach the cap, and wrapped so a synthesis failure never loses the answers
+  // the user already paid for.
   let synthesis: CouncilAnswer | undefined;
+  let note: string | undefined;
   if (doSynthesis) {
-    synthesis = await synthesizeAnswers({ prompt: input.prompt, answers, provider, baseline });
-    newSpent = addSessionSpend(input.sessionId, synthesis.receipt.costUsd);
+    const fusion = buildFusionPrompt(input.prompt, answers);
+    const synthCostEst = costOf(baseline, estimateTokens(fusion), MAX_OUTPUT_TOKENS);
+    const remainingNow = Math.max(0, capUsd - newSpent);
+    if (synthCostEst > remainingNow) {
+      note = 'Synthesis skipped — it would exceed the remaining session budget. Showing the sources.';
+    } else {
+      try {
+        synthesis = await synthesizeAnswers({ fusion, answers, provider, baseline });
+        newSpent = addSessionSpend(input.sessionId, synthesis.receipt.costUsd);
+      } catch {
+        note = 'Synthesis failed — showing the sources. You were not charged for the synthesis.';
+      }
+    }
   }
 
   return {
     blocked: false,
     answers,
     synthesis,
+    message: note,
     session: {
       spentUsd: round(newSpent, 8),
       capUsd,
@@ -206,18 +229,22 @@ export async function council(input: {
  * produces one consolidated answer. Offline the aggregator is the Mock; with a real
  * provider it genuinely fuses. Its cost is a real receipt charged to the session.
  */
+function buildFusionPrompt(prompt: string, answers: CouncilAnswer[]): string {
+  return (
+    `Synthesize the single best answer to: "${prompt}"\n\n` +
+    `Candidate answers from ${answers.length} models:\n` +
+    answers.map((a, i) => `[${i + 1}] ${a.answer}`).join('\n\n') +
+    `\n\nProduce one consolidated, higher-quality answer that combines their strengths.`
+  );
+}
+
 async function synthesizeAnswers(params: {
-  prompt: string;
+  fusion: string;
   answers: CouncilAnswer[];
   provider: ModelProvider;
   baseline: ModelInfo;
 }): Promise<CouncilAnswer> {
-  const { prompt, answers, provider, baseline } = params;
-  const fusion =
-    `Synthesize the single best answer to: "${prompt}"\n\n` +
-    `Candidate answers from ${answers.length} models:\n` +
-    answers.map((a, i) => `[${i + 1}] ${a.answer}`).join('\n\n') +
-    `\n\nProduce one consolidated, higher-quality answer that combines their strengths.`;
+  const { fusion, answers, provider, baseline } = params;
 
   const gen = await provider.generate({
     model: baseline,
