@@ -2,6 +2,7 @@
 
 import type { Receipt as ReceiptData } from '@/lib/cost/cost';
 import { Receipt } from './Receipt';
+import { Markdown } from './Markdown';
 
 export interface ChatTurn {
   id: string;
@@ -34,8 +35,8 @@ export function Message({ turn }: { turn: ChatTurn }) {
         </svg>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="whitespace-pre-wrap text-[16px] leading-[26px] text-text">
-          {turn.content}
+        <div className="text-[16px] leading-[26px] text-text">
+          {turn.content && <Markdown text={turn.content} />}
           {turn.pending && (
             <span
               className="animate-blinkSoft ml-0.5 inline-block h-[18px] w-[2px] translate-y-[3px] rounded-full bg-accent align-middle"

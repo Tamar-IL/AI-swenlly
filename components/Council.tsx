@@ -2,6 +2,7 @@
 
 import type { Receipt as ReceiptData } from '@/lib/cost/cost';
 import { Receipt } from './Receipt';
+import { Markdown } from './Markdown';
 import { usd } from '@/lib/format';
 
 export interface CouncilAnswer {
@@ -43,8 +44,8 @@ export function Council({ answers }: { answers: CouncilAnswer[] }) {
               </span>
             )}
             <div className="mb-2 text-[13px] font-medium text-text">{a.receipt.modelLabel}</div>
-            <div className="max-h-[52vh] overflow-y-auto whitespace-pre-wrap text-[14px] leading-[22px] text-text-secondary">
-              {a.answer}
+            <div className="max-h-[52vh] overflow-y-auto text-[14px] leading-[22px] text-text-secondary">
+              <Markdown text={a.answer} />
             </div>
             <div className="mt-3">
               <Receipt receipt={a.receipt} />

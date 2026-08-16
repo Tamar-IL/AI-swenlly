@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 8 — Markdown + code rendering in answers (2026-08-16)
+- Built a dependency-free markdown renderer (lib/markdown/parse.ts pure parser + components/Markdown.tsx): fenced code blocks with a language + copy header, headings, ordered/unordered lists, and inline code/bold/italic/links. Wired into assistant messages + council columns (user messages stay plain). Closes the critic's "a coding product can't render code" gap.
+- XSS-safe by construction: emits React elements, never dangerouslySetInnerHTML; link hrefs sanitized (javascript:/data: rejected) — per the trust-safety standing rule. 6 new parser tests incl. the XSS cases.
+- Verified: 56 tests pass; eval still 🟢 GO; build clean; screenshot confirms lists + bold render. Next (task #10): real provider+judge run, streaming, council synthesis (MoA).
+
 ## Chunk 7 — Product README + run instructions (2026-08-16)
 - Rewrote root README.md as the founder-facing product doc: quickstart (zero keys), how to prove the bet (`npm run eval`), commands table, config/env vars, a how-it-works diagram, project layout, and an honest status/roadmap. Links out to CLAUDE.md + org map for the team story.
 - Includes the honesty caveats verbatim (simulated judge + illustrative prices; in-memory ledger + IP-rate-limit backstop; council has no fusion yet) so the README never over-claims.
