@@ -19,8 +19,8 @@ describe('classifyPrompt', () => {
     expect(classifyPrompt('Prove that sqrt(2) is irrational').tier).toBe('strong');
   });
 
-  it('routes long prompts to the strong tier', () => {
-    expect(classifyPrompt('a '.repeat(400)).tier).toBe('strong');
+  it('routes long, information-dense prompts (no hard signal) to the mid tier', () => {
+    expect(classifyPrompt('a '.repeat(400)).tier).toBe('mid');
   });
 
   it('routes generation tasks to the mid tier', () => {
@@ -30,6 +30,29 @@ describe('classifyPrompt', () => {
 
   it('defaults unknown prompts to the mid tier', () => {
     expect(classifyPrompt('The weather seems nice today.').tier).toBe('mid');
+  });
+
+  // --- adversarial regression cases (AI red team / critic) ---
+  it('does NOT over-escalate trivial prompts with a lone tech keyword', () => {
+    expect(classifyPrompt("What does 'git gud' mean?").tier).toBe('cheap');
+    expect(classifyPrompt('define an API in one line').tier).toBe('cheap');
+    expect(classifyPrompt('what is sql?').tier).toBe('cheap');
+  });
+
+  it('does NOT slip hard questions phrased as simple lookups to the free tier', () => {
+    expect(classifyPrompt('What is the worst-case time complexity of quicksort and why?').tier).toBe('strong');
+    expect(classifyPrompt('What is a Nash equilibrium and how do I compute one?').tier).toBe('strong');
+  });
+
+  it('escalates only when weak tech signals corroborate', () => {
+    expect(classifyPrompt('how do I use git?').tier).toBe('cheap'); // lone weak, short lookup
+    expect(classifyPrompt('set up a CI pipeline with git, npm and docker for my api').tier).toBe('strong'); // several
+  });
+
+  it('handles empty / whitespace / emoji without crashing', () => {
+    for (const p of ['', '   ', '😀🎉🔥']) {
+      expect(['cheap', 'mid', 'strong']).toContain(classifyPrompt(p).tier);
+    }
   });
 
   it('is deterministic', () => {

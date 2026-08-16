@@ -36,7 +36,9 @@ export function Receipt({ receipt, printIn = false }: { receipt: ReceiptData; pr
         {savedZero ? (
           <span className="text-text-muted">best model for this</span>
         ) : (
-          <span className="font-semibold text-savings">saved {usd(receipt.savedUsd)}</span>
+          <span className="font-semibold text-savings" title="vs. always using the strong model">
+            saved {usd(receipt.savedUsd)}
+          </span>
         )}
         <span className={`ml-1 text-text-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden>⌄</span>
       </button>

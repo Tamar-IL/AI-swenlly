@@ -2,9 +2,13 @@ import type { Tier } from '../providers/types';
 
 /**
  * Lightweight, rules-based prompt classification. Deliberately NOT an ML model
- * (that's a later, evidence-gated step) — this is transparent, free, deterministic,
- * and unit-testable. It reads a handful of cheap signals off the prompt and maps
- * them to a suggested tier.
+ * (that's a later, evidence-gated step) — transparent, free, deterministic, testable.
+ *
+ * Hardened against the two gaming vectors the AI red team / critic found:
+ *  - A lone weak tech keyword ("git", "api", "sql", "java"…) no longer forces the
+ *    expensive strong model onto a trivial prompt — weak signals need corroboration.
+ *  - A hard question phrased as a short "what is…" lookup no longer slips to the
+ *    free model — complexity terms (complexity, equilibrium, theorem…) escalate.
  */
 
 export interface Classification {
@@ -16,56 +20,74 @@ export interface Classification {
   chars: number;
 }
 
-const CODING_RE =
-  /\b(code|function|bug|debug|stack\s?trace|regex|sql|api|compile|refactor|typescript|python|javascript|rust|java|c\+\+|async|npm|git)\b|```|=>|\bdef\s|\bclass\s|\bimport\s/i;
+// Structural / unambiguous "this is hard" signals — any one → strong.
+const STRONG_RE =
+  /```|=>|\bdef\s|\bclass\s|\bfunction\b|\bdebug\b|stack\s?trace|\bregex\b|\bcompile\b|\brefactor\b|\balgorithm\b|\bcomplexity\b|\bequilibrium\b|\bderivative\b|\bintegral\b|\btheorem\b|\brecursion\b|\bnp-?hard\b|\bbig-?o\b|\bprove\b|\bderive\b|\banaly[sz]e\b|\barchitect\b|\boptimi[sz]e\b|\btrade[- ]?offs?\b|\bimplications\b|\bstrategy\b|\bevaluate\b|explain\s+why|why\s+(does|do|is|are)|step[- ]by[- ]step|pros\s+and\s+cons|write\s+(a|an|me)?\s*\w*\s*(function|query|program|script|regex|sql|method|algorithm|class)/i;
 
-const COMPLEX_RE =
-  /\b(prove|derive|analyze|analyse|architect|design|optimi[sz]e|trade[- ]?off|explain\s+why|step[- ]by[- ]step|reason|strategy|compare|evaluate|implications|why\s+does|how\s+would|pros\s+and\s+cons)\b/i;
+// Weak technical tokens — escalate ONLY with corroboration (2+, or with length).
+const WEAK_TECH_RE = /\b(api|git|sql|java|rust|javascript|typescript|python|c\+\+|npm|async|http|json|kubernetes|docker)\b/gi;
 
+// Content-generation tasks → mid.
 const BUILDER_RE =
-  /\b(build|create|generate|make|website|landing\s?page|component|app|persona|write\s+(a|an|me)\b|draft|compose|design\s+a)\b/i;
+  /\b(write|create|generate|make|build|website|landing\s?page|component|app|persona|draft|compose|design\s+a|email|blog|article|story|essay)\b/i;
 
-const SIMPLE_RE =
-  /^\s*(hi|hey|hello|thanks|thank\s+you|yo|sup|good\s+(morning|evening))\b|^\s*(what|who|when|where)\s+(is|are|was|were)\b|^\s*(define|translate|convert|spell)\b/i;
+// Simple lookups / chit-chat → cheap (when short and not strong).
+const GREETING_RE = /^\s*(hi|hey|hello|thanks|thank\s+you|yo|sup|good\s+(morning|evening|afternoon))\b/i;
+const DEFINE_RE = /^\s*(define|translate|convert|spell)\b/i;
+const SIMPLE_LEAD_RE = /^\s*(what|who|when|where|which|how|is|are|do|does|did|can|could|would|should)\b/i;
 
-const LONG_CHARS = 600; // long prompts tend to carry more complexity
+const LONG_CHARS = 600;
+const SHORT_CHARS = 120;
 
-/** Classify a prompt into a suggested tier via ordered, first-match rules. */
+/** Classify a prompt into a suggested tier via ordered, corroborated rules. */
 export function classifyPrompt(prompt: string): Classification {
   const text = prompt ?? '';
   const chars = text.length;
   const matched: string[] = [];
 
-  const isCoding = CODING_RE.test(text);
-  const isComplex = COMPLEX_RE.test(text);
+  const isStrong = STRONG_RE.test(text);
+  const weakCount = (text.match(WEAK_TECH_RE) ?? []).length;
   const isBuilder = BUILDER_RE.test(text);
-  const isSimple = SIMPLE_RE.test(text);
   const isLong = chars >= LONG_CHARS;
+  const isShort = chars <= SHORT_CHARS;
+  const looksSimple = GREETING_RE.test(text) || DEFINE_RE.test(text) || SIMPLE_LEAD_RE.test(text);
 
-  if (isCoding) matched.push('coding');
-  if (isComplex) matched.push('complex-reasoning');
+  if (isStrong) matched.push('strong-signal');
+  if (weakCount > 0) matched.push(`weak-tech×${weakCount}`);
   if (isBuilder) matched.push('generation');
-  if (isSimple) matched.push('simple');
   if (isLong) matched.push('long');
+  if (looksSimple) matched.push('simple');
 
-  // Ordered precedence: hardest signals win.
-  if (isCoding) return { tier: 'strong', signal: 'coding', matched, chars };
-  if (isComplex) return { tier: 'strong', signal: 'complex-reasoning', matched, chars };
-  if (isLong) return { tier: 'strong', signal: 'long-prompt', matched, chars };
+  // 1. Unambiguous hard signal → strong.
+  if (isStrong) return { tier: 'strong', signal: 'strong-signal', matched, chars };
+
+  // 2. Weak tech signals only escalate with corroboration (multiple, or long+technical).
+  if (weakCount >= 2 || (weakCount >= 1 && isLong)) {
+    return { tier: 'strong', signal: 'corroborated-technical', matched, chars };
+  }
+
+  // 3. Short, simple-looking lookup with at most an incidental tech word → cheap.
+  if (looksSimple && isShort && weakCount <= 1) {
+    return { tier: 'cheap', signal: 'simple', matched, chars };
+  }
+
+  // 4. Content generation → mid.
   if (isBuilder) return { tier: 'mid', signal: 'generation', matched, chars };
-  if (isSimple) return { tier: 'cheap', signal: 'simple', matched, chars };
 
-  // Unknown/medium prompts: default to the balanced tier.
+  // 5. Long, information-dense prompt with no hard signal → balanced tier.
+  if (isLong) return { tier: 'mid', signal: 'long-prompt', matched, chars };
+
+  // 6. Unknown/medium prompts default to the balanced tier.
   return { tier: 'mid', signal: 'default', matched, chars };
 }
 
 /** A short human explanation for the receipt, given a classification + chosen tier. */
 export function reasonFor(c: Classification, chosenTier: Tier): string {
   const map: Record<string, string> = {
-    coding: 'Detected a coding/technical task → routed to the strong model.',
-    'complex-reasoning': 'Detected complex reasoning → routed to the strong model.',
-    'long-prompt': 'Long, information-dense prompt → routed to the strong model.',
+    'strong-signal': 'Detected a coding/complex-reasoning task → routed to the strong model.',
+    'corroborated-technical': 'Multiple technical signals → routed to the strong model.',
     generation: 'Content-generation task → routed to the balanced model.',
+    'long-prompt': 'Long, information-dense prompt → routed to the balanced model.',
     simple: 'Simple question → routed to the free model.',
     default: 'General question → routed to the balanced model.',
   };
