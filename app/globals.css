@@ -1,0 +1,180 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ *
+ * Design tokens — see docs/design-system.md. Light on :root, dark on .dark.
+ * Values are "R G B" triplets so Tailwind's rgb(var(--x) / <alpha>) works.
+ * Fonts use a system-safe stack (Inter/JetBrains Mono preferred) so the app
+ * builds and runs with zero network — swap to next/font later if desired.
+ * ------------------------------------------------------------------ */
+
+:root {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Backgrounds & surfaces */
+  --bg: 251 251 250;
+  --surface: 255 255 255;
+  --surface-raised: 255 255 255;
+  --surface-sunken: 246 246 244;
+  --overlay: 16 15 20;
+
+  /* Text */
+  --text: 22 21 26;
+  --text-secondary: 90 88 98;
+  --text-muted: 110 107 119;
+  --text-inverse: 251 251 250;
+
+  /* Lines */
+  --border: 232 230 225;
+  --border-strong: 214 211 205;
+
+  /* Brand */
+  --accent: 91 80 232;
+  --accent-hover: 76 65 214;
+  --accent-soft: 238 236 253;
+  --accent-ring: 91 80 232;
+
+  /* Tiers */
+  --tier-cheap: 15 122 79;
+  --tier-cheap-bg: 228 245 236;
+  --tier-cheap-bd: 183 228 206;
+  --tier-cheap-solid: 18 163 100;
+
+  --tier-mid: 180 83 9;
+  --tier-mid-bg: 253 243 224;
+  --tier-mid-bd: 246 218 165;
+  --tier-mid-solid: 217 143 38;
+
+  --tier-strong: 124 58 237;
+  --tier-strong-bg: 243 236 254;
+  --tier-strong-bd: 221 202 251;
+  --tier-strong-solid: 124 58 237;
+
+  /* Status */
+  --success: 15 122 79;
+  --warning: 180 83 9;
+  --danger: 180 35 24;
+  --danger-bg: 253 235 233;
+  --danger-solid: 217 45 32;
+  --savings: 15 122 79;
+
+  /* Shadows (light) */
+  --shadow-sm: 0 1px 2px rgb(16 15 20 / 0.05);
+  --shadow-md: 0 2px 4px rgb(16 15 20 / 0.06), 0 8px 20px rgb(16 15 20 / 0.06);
+  --shadow-lg: 0 4px 8px rgb(16 15 20 / 0.06), 0 24px 48px rgb(16 15 20 / 0.1);
+  --shadow-accent: 0 4px 16px rgb(91 80 232 / 0.28);
+}
+
+.dark {
+  --bg: 14 14 18;
+  --surface: 23 23 28;
+  --surface-raised: 30 30 37;
+  --surface-sunken: 18 18 23;
+  --overlay: 0 0 0;
+
+  --text: 244 243 247;
+  --text-secondary: 180 178 190;
+  --text-muted: 134 131 143;
+  --text-inverse: 22 21 26;
+
+  --border: 42 42 51;
+  --border-strong: 58 58 69;
+
+  --accent: 139 128 255;
+  --accent-hover: 163 152 255;
+  --accent-soft: 35 32 64;
+  --accent-ring: 139 128 255;
+
+  --tier-cheap: 67 217 163;
+  --tier-cheap-bg: 18 40 33;
+  --tier-cheap-bd: 32 71 58;
+  --tier-cheap-solid: 67 217 163;
+
+  --tier-mid: 245 181 68;
+  --tier-mid-bg: 46 36 16;
+  --tier-mid-bd: 77 59 27;
+  --tier-mid-solid: 245 181 68;
+
+  --tier-strong: 167 139 250;
+  --tier-strong-bg: 39 31 64;
+  --tier-strong-bd: 62 50 99;
+  --tier-strong-solid: 167 139 250;
+
+  --success: 67 217 163;
+  --warning: 245 181 68;
+  --danger: 255 138 128;
+  --danger-bg: 54 24 22;
+  --danger-solid: 240 68 56;
+  --savings: 67 217 163;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.4), 0 12px 32px rgb(0 0 0 / 0.36);
+  --shadow-lg: 0 8px 24px rgb(0 0 0 / 0.48);
+  --shadow-accent: 0 4px 20px rgb(139 128 255 / 0.35);
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--text));
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv05', 'cv08', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin custom scrollbar for the transcript */
+.scroll-thin::-webkit-scrollbar {
+  width: 10px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: rgb(var(--border-strong));
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.scroll-thin {
+  overscroll-behavior: contain;
+}
+
+/* Keyboard focus only */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent-ring));
+  outline-offset: 2px;
+}
+
+/* Composer fade mask: text scrolls under a gradient */
+.composer-fade::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 32px;
+  background: linear-gradient(to top, rgb(var(--bg)), rgb(var(--bg) / 0));
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
