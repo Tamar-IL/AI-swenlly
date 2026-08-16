@@ -1,107 +1,136 @@
-# The Company — an AI-native engineering team that builds your ideas end-to-end
+# The Conductor — one answer, many minds
 
-This repo is a **team of specialist AI agents** that takes a project idea and drives it from
-"here's what I want" to a built, reviewed, documented deliverable — the way a top-tier
-software company would. It's the working implementation of the org map in
-[`docs/engineering-org-map.md`](docs/engineering-org-map.md).
+A ChatGPT/Claude-style chat platform whose engine is **many AIs, not one**. The Conductor
+routes each question to the *cheapest* AI that answers it well, and shows a **cost + quality
+"receipt"** on every answer — which model replied, and how much it saved you versus always
+using the strongest model. Hard questions can convene a **council** (several models side by
+side). Every free-tier request is protected by a **hard per-session cost cap**.
 
-You are the **founder**. You give the idea and make the final calls. Everything else — framing,
-design, building, reviewing, documenting — the team does.
+It runs with **zero paid API keys** out of the box: the default provider is a deterministic
+offline mock, so the whole app, its tests, and its go/no-go eval run for free, anywhere.
+
+> Built end-to-end by an AI-native engineering team of specialist sub-agents. The team's
+> operating system and the ~22 agents live in [`CLAUDE.md`](CLAUDE.md) and
+> [`docs/engineering-org-map.md`](docs/engineering-org-map.md); the decision log is in
+> [`docs/lessons.md`](docs/lessons.md) and the build log in [`docs/progress.md`](docs/progress.md).
 
 ---
 
-## The 60-second mental model
+## Quickstart
 
+Requires **Node 22+**. No API keys needed.
+
+```bash
+npm install          # or: npm ci
+npm run dev          # http://localhost:3000
 ```
-YOU (founder)  ──►  ORCHESTRATOR  ──►  22 senior specialists  ──►  reviewers gate the work
-   the idea         the main chat        do the actual work         before it ships
+
+Open the app, ask anything, and watch the receipt on each answer. Try a simple lookup
+("What is the capital of France?" → routes to the free model) and a coding/reasoning task
+("Write a Python function to reverse a linked list" → routes to the strong model).
+
+---
+
+## Prove the bet (the go/no-go gate)
+
+The core thesis — *routed answers stay ≈ as good as the best single model at ≥50% lower cost* —
+is checked by an offline eval that runs the **real** router over a labeled golden set:
+
+```bash
+npm run eval
 ```
 
-- **You** talk to the main agent (the Orchestrator).
-- The **Orchestrator** reads your idea, decomposes it, and routes work to the right specialists.
-- **Specialists** (Backend, Frontend, Architect, Designer, DBA…) do the work — in parallel
-  where they can.
-- **Reviewers** (QA, Code Reviewer, Critic, AppSec, and for AI products Eval / Trust & Safety
-  / AI Red Team) attack the work at **proof gates** before it advances.
-- Nothing you built as culture is lost: caught mistakes become permanent lessons
-  (`docs/lessons.md`).
+It prints a per-case table and a verdict, and **exits non-zero on NO-GO** (so CI gates on it).
 
-The full rules the team runs on live in [`CLAUDE.md`](CLAUDE.md) — that file loads
-automatically every session.
+> **Honesty note.** Offline, the eval uses a deterministic mock provider, a *simulated* judge,
+> and *illustrative* prices. A **GO proves the routing + economics pipeline is internally
+> consistent and that the router picks the right tier** (it reports routing accuracy separately) —
+> it does **not** prove a cheap model matches a frontier model on real answers. Real-quality
+> validation requires wiring a real provider + a real LLM-as-judge (see Roadmap).
 
 ---
 
-## How to use it — just start Claude Code in this repo and describe your idea
+## Commands
 
-The magic word is nothing special. Open Claude Code here and say what you want built. For best
-results, tell the Orchestrator to run the protocol. For example:
+| Command | What it does |
+|---|---|
+| `npm run dev` | Run the app in dev mode on :3000 |
+| `npm run build` / `npm start` | Production build / serve |
+| `npm test` | Unit tests (router, cost, caps, orchestrator, security) |
+| `npm run eval` | The offline go/no-go eval gate |
+| `npm run typecheck` | `tsc --noEmit` |
 
-> **"You're the Orchestrator. Read `CLAUDE.md` and run the orchestration protocol on this
-> idea: _<your idea here>_. Deploy only the agents this project needs, run the proof gates,
-> and give me a founder summary at the end."**
-
-The Orchestrator will:
-1. **Frame** it with the Product Manager (what/why, MVP, risks) and ask you only the questions
-   that change the build.
-2. **Design** it (Architect + Designers), consulting the Advisor on big bets.
-3. **Build** it (Backend / Frontend / DBA / AI specialists — in parallel).
-4. **Gate** it (QA → Code Review → Critic, plus security/AI gates as needed).
-5. **Document & hand back** a summary: what's built, what's proven, what's deferred, what's next.
-
-You stay in control: it asks before expensive or irreversible decisions, and you break ties.
+CI (`.github/workflows/ci.yml`) runs typecheck + tests + the eval + build on every push.
 
 ---
 
-## The team (T1 core — the "build-first" senior team)
+## Configuration (all optional)
 
-| Discover | Build | Run & Scale | Improve | AI Operations | Cross-cutting |
-|---|---|---|---|---|---|
-| product-manager | software-architect | platform-engineer | performance-engineer | ai-llm-platform-engineer | qa-engineer |
-| prototyper-poc | backend-engineer | devops-engineer | code-reviewer | prompt-engineer | technical-writer |
-| | frontend-engineer | | critic | eval-engineer | advisor |
-| | database-engineer | | | trust-safety-engineer | |
-| | product-designer | | | ai-red-team | |
-| | ui-visual-designer | | | | |
-| | appsec-engineer | | | | |
+Copy `.env.example` to `.env.local`. Everything has a safe default — the app works with none of it.
 
-Each is a file in [`.claude/agents/`](.claude/agents/). The AI-Operations column only fires
-when the thing you're building **is itself an AI/agent product**.
-
----
-
-## Growing the team
-
-Your map has ~45 roles across 3 tiers; this is the **T1 core** (build-first). To add a role:
-- **On demand (T2):** ask the Orchestrator, e.g. *"we need a Mobile Engineer for this"* — it
-  raises a **requisition**, and on your approval a new agent file gets created from the same
-  template. This requisition-based rule is the brake that keeps the team from sprawling.
-- **By hand:** copy any file in `.claude/agents/` and adapt it.
-
-Roles are added deliberately, never on a whim — see the "requisition" rule in `CLAUDE.md`.
-
----
-
-## The four "attackers" — so you're never confused
-
-Four roles live in the adversarial neighborhood. Three attack, one defends:
-
-| Agent | Attacks / owns | Asks |
+| Variable | Default | Meaning |
 |---|---|---|
-| **critic** | the work product | "Is this good work?" |
-| **appsec-engineer** | classic system security | "Can I break in?" |
-| **ai-red-team** | the AI/agent behavior | "Can I make the agent misbehave?" |
-| **trust-safety-engineer** | *builds the defenses* | "Will the defenses hold?" |
+| `CONDUCTOR_PROVIDER` | `mock` | `mock` (offline, no key) or `openrouter` (real **free** models) |
+| `OPENROUTER_API_KEY` | — | A *free* OpenRouter key; only used when `CONDUCTOR_PROVIDER=openrouter`. Missing key falls back to mock. |
+| `CONDUCTOR_SESSION_CAP_USD` | `0.05` | Hard per-session spend cap. `0` = free models only. |
 
 ---
 
-## Files in this repo
+## How it works
 
-- `CLAUDE.md` — the shared culture + the orchestration protocol (loads every session).
-- `.claude/agents/*.md` — the 22 specialist workers.
-- `docs/engineering-org-map.md` — the full org map (the source of truth, all 45 roles / 3 tiers).
-- `docs/lessons.md` — the org's growing memory of caught mistakes.
+```
+Browser (chat UI)
+   │  POST /api/chat { prompt, sessionId, overrideModelId?, history? }
+   ▼
+Router (rules-based)  ──►  Provider layer  ──►  model
+   │  classify prompt → tier          (Mock by default; OpenRouter-free if keyed)
+   │  honor manual override (budget-checked)
+   │  cost-aware clamp vs remaining session budget
+   ▼
+Cost engine → Receipt (model, reason, tokens, cost, saved vs strong baseline)
+   │  charge session ledger · enforce hard cap · IP rate-limit backstop
+   ▼
+Answer + receipt back to the UI
+```
+
+- **Router** ([`lib/router`](lib/router)) — transparent rules (not ML): classify the prompt into
+  a tier (free / balanced / strong), honor a manual override, and downgrade to fit the remaining
+  budget. Weak tech keywords need corroboration to escalate; complexity terms escalate hidden-hard
+  questions.
+- **Providers** ([`lib/providers`](lib/providers)) — one `ModelProvider` interface. `MockProvider`
+  is the keyless default; `OpenRouterProvider` adds real free models behind the same interface.
+- **Cost + caps** ([`lib/cost`](lib/cost)) — token estimation, per-call cost, the receipt, and a
+  per-session ledger with a hard cap. Provider token counts are sanitized (a bad value can't
+  uncap spend), and budgeting uses the provider's *max* output so a turn can't overshoot.
+- **Guardrails** ([`lib/security`](lib/security)) — history validation (no forged `system` turns,
+  bounded size) and an IP-keyed rate limiter as the real backstop when a client rotates its
+  session id.
+- **Council** ([`lib/chat/orchestrate.ts`](lib/chat/orchestrate.ts)) — v1 asks one model per tier
+  and shows them side by side (metered against the cap). Fusion/synthesis is the v2 headline.
+
+## Project layout
+
+```
+app/            Next.js App Router — UI (page.tsx) + API routes (api/chat, api/council, api/models)
+components/     React UI: chat shell, message, the Receipt, scope override, council, cost meter
+lib/            Engine: providers/ · router/ · cost/ · chat/ (orchestrate seam) · security/
+evals/          The go/no-go eval: golden set, judge, runner
+docs/           architecture.md · design-system.md · progress.md · lessons.md · engineering-org-map.md
+.claude/agents/ The 22 specialist sub-agents that built this
+```
 
 ---
 
-*Built from the org map v1.2. Next phases per the map: add T2 roles on demand, and let the
-lessons ledger compound.*
+## Status & roadmap
+
+**MVP thin-slice — done & proven:** clean chat UI (light/dark), rules-based router across 3 tiers,
+cost+quality receipt, manual override, council side-by-side stub, hard per-session cost caps, and
+the offline go/no-go eval (currently GO). 50 unit tests, CI enforced. Runs with zero paid keys.
+
+**Known limitations (honest):** the session ledger is in-memory (single-instance MVP; the IP
+rate-limit is the abuse backstop); the eval uses a simulated judge + illustrative prices; council
+has no fusion yet.
+
+**Next (post-MVP, tracked in `docs/progress.md`):** a real paid-catalog + LLM-judge run to prove
+quality for real · durable KV ledger + global/daily cap · input/output moderation · council
+synthesis (Mixture-of-Agents) · streaming + markdown/code rendering.

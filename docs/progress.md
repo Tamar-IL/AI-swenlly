@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 7 — Product README + run instructions (2026-08-16)
+- Rewrote root README.md as the founder-facing product doc: quickstart (zero keys), how to prove the bet (`npm run eval`), commands table, config/env vars, a how-it-works diagram, project layout, and an honest status/roadmap. Links out to CLAUDE.md + org map for the team story.
+- Includes the honesty caveats verbatim (simulated judge + illustrative prices; in-memory ledger + IP-rate-limit backstop; council has no fusion yet) so the README never over-claims.
+- Verified: 50 tests pass, eval still 🟢 GO. Next (task #10): real paid-catalog + LLM-judge, KV ledger + global cap, moderation, council synthesis, streaming/markdown.
+
 ## Chunk 6 — CI gate (2026-08-16)
 - Added .github/workflows/ci.yml: runs typecheck + 50 unit tests + the offline go/no-go eval (exits non-zero on NO-GO) + production build on every push/PR — all zero-key. This was the eval-engineer gate's top process finding ("no CI → a router change can silently break the bet"); now a routing/catalog/cost change that breaks the founder's bet fails CI.
 - Verified locally with the exact CI commands (npm ci, typecheck, test, eval, build) — all green; eval still 🟢 GO. Eval report uploaded as a CI artifact.
