@@ -131,7 +131,8 @@ export default function Home() {
 
   async function convene() {
     const prompt = input.trim();
-    if (!prompt || busy) return;
+    if (!prompt || busy || !sessionId) return;
+    setCapped(null);
     setInput('');
     const userTurn: ChatTurn = { id: newId(), role: 'user', content: prompt };
     setItems((prev) => [...prev, { kind: 'msg', turn: userTurn }]);
@@ -140,11 +141,17 @@ export default function Home() {
       const res = await fetch('/api/council', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, sessionId }),
       });
       const data = await res.json();
-      if (data.answers) {
+      if (data.blocked) {
+        setCapped(data.message ?? 'Session cost cap reached.');
+      } else if (data.answers?.length) {
         setItems((prev) => [...prev, { kind: 'council', id: newId(), answers: data.answers }]);
+      }
+      if (data.session) {
+        setSpent(data.session.spentUsd);
+        setCap(data.session.capUsd);
       }
     } catch {
       /* ignore */

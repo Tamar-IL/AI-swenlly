@@ -30,9 +30,13 @@ export function resetAllSessions(): void {
   ledger.clear();
 }
 
-/** The configured hard per-session cap in USD. */
+/**
+ * The configured hard per-session cap in USD. Accepts an explicit 0 (meaning
+ * "no paid spend allowed" — only genuinely free models pass the gate); falls back
+ * to the 0.05 default only when unset, blank, non-numeric, or negative.
+ */
 export function sessionCapUsd(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.CONDUCTOR_SESSION_CAP_USD;
-  const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.05;
+  const parsed = raw != null && raw.trim() !== '' ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0.05;
 }

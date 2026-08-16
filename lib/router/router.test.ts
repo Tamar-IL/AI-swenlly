@@ -53,4 +53,63 @@ describe('route', () => {
     });
     expect(d.blocked).toBe(true);
   });
+
+  it('blocks an over-budget manual override instead of bypassing the cap', () => {
+    const paidOnly = MOCK_CATALOG.filter((m) => !m.free);
+    const d = route({
+      prompt: 'hi',
+      catalog: paidOnly,
+      overrideModelId: 'mock-strong',
+      remainingBudgetUsd: 0, // cap exhausted
+    });
+    expect(d.overridden).toBe(true);
+    expect(d.blocked).toBe(true);
+    expect(d.reason).toMatch(/budget|cap/i);
+  });
+
+  it('honours an affordable manual override', () => {
+    const d = route({
+      prompt: 'hi',
+      catalog: MOCK_CATALOG,
+      overrideModelId: 'mock-strong',
+      remainingBudgetUsd: 1,
+    });
+    expect(d.overridden).toBe(true);
+    expect(d.blocked).toBe(false);
+    expect(d.model.id).toBe('mock-strong');
+  });
+
+  it('downgrades a strong-intent prompt to the best AVAILABLE tier, not the cheapest', () => {
+    // Catalog with cheap + mid only; a coding prompt wants strong.
+    const noStrong = MOCK_CATALOG.filter((m) => m.tier !== 'strong');
+    const d = route({ prompt: 'write a python function', catalog: noStrong });
+    expect(d.tier).toBe('mid'); // best available <= strong, NOT cheap
+  });
+
+  it('throws on an empty catalog instead of a raw TypeError', () => {
+    expect(() => route({ prompt: 'hi', catalog: [] })).toThrow(/empty catalog/i);
+  });
+
+  it('admits at target tier when budget exactly equals the estimate (strict >)', () => {
+    // Compute the exact estimate for the mid model on a short prompt.
+    const prompt = 'write me a poem';
+    const probe = route({ prompt, catalog: MOCK_CATALOG });
+    const est = probe.estimatedCostUsd;
+    const exact = route({ prompt, catalog: MOCK_CATALOG, remainingBudgetUsd: est });
+    expect(exact.downgraded).toBe(false); // exactly-at-budget is admitted
+    const under = route({ prompt, catalog: MOCK_CATALOG, remainingBudgetUsd: est - 1e-9 });
+    expect(under.model.free).toBe(true); // one epsilon under → downgrade to free
+  });
+
+  it('accounts for history tokens in the budget (cannot hide workload in history)', () => {
+    const paidOnly = MOCK_CATALOG.filter((m) => !m.free);
+    // Tiny prompt, but a large extra-token load should push cost over a small budget.
+    const d = route({
+      prompt: 'hi',
+      catalog: paidOnly,
+      remainingBudgetUsd: 0.0002,
+      extraInputTokens: 100000,
+    });
+    expect(d.blocked).toBe(true);
+  });
 });

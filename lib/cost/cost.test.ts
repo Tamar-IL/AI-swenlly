@@ -17,6 +17,16 @@ describe('costOf', () => {
     expect(costOf(mid, 0, 1000)).toBeCloseTo(0.00075, 8);
     expect(costOf(mid, 2000, 2000)).toBeCloseTo(0.002, 8);
   });
+
+  it('never returns NaN/Infinity/negative for malformed token counts (would uncap the wallet)', () => {
+    for (const bad of [NaN, Infinity, -100, -1]) {
+      expect(Number.isFinite(costOf(mid, bad, 100))).toBe(true);
+      expect(costOf(mid, bad, 100)).toBeGreaterThanOrEqual(0);
+      expect(Number.isFinite(costOf(mid, 100, bad))).toBe(true);
+    }
+    // A NaN input is treated as 0 tokens, so cost is just the other side.
+    expect(costOf(mid, NaN, 0)).toBe(0);
+  });
 });
 
 describe('buildReceipt', () => {

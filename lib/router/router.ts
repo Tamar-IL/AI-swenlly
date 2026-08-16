@@ -8,10 +8,14 @@ import { estimateTokens } from '../cost/tokens';
 export interface RouteInput {
   prompt: string;
   catalog: ModelInfo[];
-  /** Manual model override (by model id). When set, the router honours it. */
+  /** Manual model override (by model id). When set, the router honours it — but
+   *  still enforces the remaining budget so override cannot bypass the cost cap. */
   overrideModelId?: string;
   /** Remaining budget in USD for this session (cap - already spent). */
   remainingBudgetUsd?: number;
+  /** Estimated input tokens beyond the prompt (e.g. conversation history), so the
+   *  budget gate accounts for the FULL billed context, not just the prompt. */
+  extraInputTokens?: number;
 }
 
 export interface RouteDecision {
@@ -23,32 +27,52 @@ export interface RouteDecision {
   overridden: boolean;
   /** True if the router downgraded the tier to fit the remaining budget. */
   downgraded: boolean;
-  /** True if even the cheapest model cannot fit the remaining budget. */
+  /** True if nothing fits the remaining budget (including an over-budget override). */
   blocked: boolean;
-  /** Estimated cost of the chosen model for this prompt (output guessed). */
+  /** Estimated cost of the chosen model for this prompt (output assumed at max). */
   estimatedCostUsd: number;
 }
 
-// Assumed output length for pre-call budgeting (we don't know it yet).
-const ASSUMED_OUTPUT_TOKENS = 400;
+/**
+ * Output tokens assumed when budgeting a call BEFORE it runs. We budget against the
+ * provider's MAX output, not an average, so the actual charge can never exceed the
+ * pre-call estimate — the cap is a real ceiling, not an average-case guess.
+ */
+export const MAX_OUTPUT_TOKENS = 1024;
 
 /**
  * The rules-based router. Ordered decision:
- *   1. Manual override wins (respect the user's choice).
- *   2. Classify the prompt → a target tier.
- *   3. Cost-aware clamp: if the target tier can't fit the remaining budget,
- *      downgrade toward cheaper tiers; if nothing fits, block.
+ *   1. Manual override — honoured, but still budget-checked (blocks if unaffordable).
+ *   2. Classify the prompt → a target tier → the best AVAILABLE model at/below it.
+ *   3. Cost-aware clamp: if the target can't fit the remaining budget, downgrade
+ *      toward cheaper tiers; if nothing fits, block.
  */
 export function route(input: RouteInput): RouteDecision {
-  const { prompt, catalog, overrideModelId, remainingBudgetUsd } = input;
-  const inputTokens = estimateTokens(prompt);
-  const estCost = (m: ModelInfo) => costOf(m, inputTokens, ASSUMED_OUTPUT_TOKENS);
+  const { prompt, catalog, overrideModelId, remainingBudgetUsd, extraInputTokens = 0 } = input;
+  if (!catalog || catalog.length === 0) {
+    throw new Error('route(): empty catalog — no models to route to');
+  }
+  const inputTokens = estimateTokens(prompt) + Math.max(0, extraInputTokens);
+  const estCost = (m: ModelInfo) => costOf(m, inputTokens, MAX_OUTPUT_TOKENS);
+  const budgeted = typeof remainingBudgetUsd === 'number';
 
-  // 1. Manual override.
+  // 1. Manual override — honoured, but never allowed to bypass the cost cap.
   if (overrideModelId) {
     const forced = modelById(catalog, overrideModelId);
     if (forced) {
       const classification = classifyPrompt(prompt);
+      if (budgeted && estCost(forced) > (remainingBudgetUsd as number)) {
+        return {
+          model: forced,
+          tier: forced.tier,
+          reason: `Pinned model ${forced.label} costs more than the remaining budget — blocked to protect the cap.`,
+          classification,
+          overridden: true,
+          downgraded: false,
+          blocked: true,
+          estimatedCostUsd: estCost(forced),
+        };
+      }
       return {
         model: forced,
         tier: forced.tier,
@@ -63,32 +87,29 @@ export function route(input: RouteInput): RouteDecision {
     // Unknown override id → ignore and route normally.
   }
 
-  // 2. Classify.
+  // 2. Classify → best available model at/below the target tier.
   const classification = classifyPrompt(prompt);
-  let chosen = modelForTier(catalog, classification.tier) ?? cheapest(catalog);
+  let chosen = bestAvailableForTier(catalog, classification.tier);
   let downgraded = false;
 
   // 3. Cost-aware clamp.
-  if (typeof remainingBudgetUsd === 'number') {
-    if (estCost(chosen) > remainingBudgetUsd) {
-      const affordable = affordableDowngrade(catalog, classification.tier, remainingBudgetUsd, estCost);
-      if (affordable) {
-        downgraded = affordable.id !== chosen.id;
-        chosen = affordable;
-      } else {
-        // Nothing fits — block this turn.
-        const cheap = cheapest(catalog);
-        return {
-          model: cheap,
-          tier: cheap.tier,
-          reason: 'Session cost cap reached — no model fits the remaining budget.',
-          classification,
-          overridden: false,
-          downgraded: false,
-          blocked: true,
-          estimatedCostUsd: estCost(cheap),
-        };
-      }
+  if (budgeted && estCost(chosen) > (remainingBudgetUsd as number)) {
+    const affordable = affordableDowngrade(catalog, classification.tier, remainingBudgetUsd as number, estCost);
+    if (affordable) {
+      downgraded = affordable.id !== chosen.id;
+      chosen = affordable;
+    } else {
+      const cheap = cheapest(catalog);
+      return {
+        model: cheap,
+        tier: cheap.tier,
+        reason: 'Session cost cap reached — no model fits the remaining budget.',
+        classification,
+        overridden: false,
+        downgraded: false,
+        blocked: true,
+        estimatedCostUsd: estCost(cheap),
+      };
     }
   }
 
@@ -104,6 +125,16 @@ export function route(input: RouteInput): RouteDecision {
   };
 }
 
+/** Best model at the target tier, else the next-best AVAILABLE lower tier (not the
+ *  globally cheapest — a strong-intent prompt on a {cheap,mid} catalog gets mid). */
+function bestAvailableForTier(catalog: ModelInfo[], tier: Tier): ModelInfo {
+  for (const t of tiersFrom(tier)) {
+    const m = modelForTier(catalog, t);
+    if (m) return m;
+  }
+  return cheapest(catalog);
+}
+
 /** Walk from the target tier down to cheaper tiers, returning the first that fits. */
 function affordableDowngrade(
   catalog: ModelInfo[],
@@ -111,22 +142,18 @@ function affordableDowngrade(
   budget: number,
   estCost: (m: ModelInfo) => number,
 ): ModelInfo | undefined {
-  const order = tiersFrom(targetTier); // e.g. strong -> [strong, mid, cheap]
-  for (const tier of order) {
+  for (const tier of tiersFrom(targetTier)) {
     const m = modelForTier(catalog, tier);
     if (m && estCost(m) <= budget) return m;
   }
-  // Last resort: the globally cheapest model if it fits (covers free = $0).
   const cheap = cheapest(catalog);
   return estCost(cheap) <= budget ? cheap : undefined;
 }
 
-/** Tier list starting at `from` and descending in capability/cost. */
+/** Tier list starting at `from` and descending in capability/cost, e.g. strong -> [strong, mid, cheap]. */
 function tiersFrom(from: Tier): Tier[] {
-  const idx = TIERS.indexOf(from); // TIERS = [cheap, mid, strong]
   const descending = [...TIERS].reverse(); // [strong, mid, cheap]
-  const start = descending.indexOf(from);
-  return start >= 0 ? descending.slice(start) : descending.slice(descending.length - 1 - idx);
+  return descending.slice(descending.indexOf(from));
 }
 
 function cheapest(catalog: ModelInfo[]): ModelInfo {

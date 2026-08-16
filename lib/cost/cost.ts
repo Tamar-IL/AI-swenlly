@@ -1,10 +1,16 @@
 import type { ModelInfo } from '../providers/types';
+import { safeTokenCount } from './tokens';
 
-/** USD cost of a call given token counts and a model's per-1k pricing. */
+/**
+ * USD cost of a call given token counts and a model's per-1k pricing.
+ * Token counts are sanitised first: a non-finite/negative count (e.g. a malformed
+ * provider usage payload) must never produce NaN cost, which would poison the
+ * session ledger and silently uncap spend.
+ */
 export function costOf(model: ModelInfo, inputTokens: number, outputTokens: number): number {
-  const cost =
-    (inputTokens / 1000) * model.inputCostPer1k +
-    (outputTokens / 1000) * model.outputCostPer1k;
+  const inTok = safeTokenCount(inputTokens);
+  const outTok = safeTokenCount(outputTokens);
+  const cost = (inTok / 1000) * model.inputCostPer1k + (outTok / 1000) * model.outputCostPer1k;
   // Guard against tiny floating-point noise; round to sub-cent micro-dollars.
   return round(cost, 8);
 }

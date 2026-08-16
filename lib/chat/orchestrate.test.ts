@@ -55,11 +55,26 @@ describe('orchestrate', () => {
 
 describe('council', () => {
   it('returns one answer per catalog model, each with a receipt', async () => {
-    const answers = await council({ prompt: 'explain recursion', provider, catalog: MOCK_CATALOG });
-    expect(answers).toHaveLength(MOCK_CATALOG.length);
-    for (const a of answers) {
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c1', provider, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.blocked).toBe(false);
+    expect(r.answers).toHaveLength(MOCK_CATALOG.length);
+    for (const a of r.answers) {
       expect(a.answer).toBeTruthy();
       expect(a.receipt.modelId).toBeTruthy();
     }
+  });
+
+  it('charges every council member against the session ledger', async () => {
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c2', provider, catalog: MOCK_CATALOG, capUsd: 1 });
+    const expected = r.answers.reduce((s, a) => s + a.receipt.costUsd, 0);
+    expect(r.session.spentUsd).toBeCloseTo(expected, 8);
+    expect(r.session.spentUsd).toBeGreaterThan(0);
+  });
+
+  it('blocks the whole fan-out when it would exceed the remaining budget', async () => {
+    const r = await council({ prompt: 'explain recursion', sessionId: 'c3', provider, catalog: MOCK_CATALOG, capUsd: 0.0000001 });
+    expect(r.blocked).toBe(true);
+    expect(r.answers).toHaveLength(0);
+    expect(r.message).toMatch(/council/i);
   });
 });

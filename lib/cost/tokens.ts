@@ -12,3 +12,15 @@ export function estimateTokens(text: string): number {
 export function estimateMessagesTokens(contents: string[]): number {
   return contents.reduce((sum, c) => sum + estimateTokens(c), 0);
 }
+
+/**
+ * Coerce a provider-reported token count into a safe, finite, non-negative integer.
+ * A malformed usage payload (NaN, Infinity, a stray string, a negative) must never
+ * reach the cost math — a single NaN would poison the session ledger and silently
+ * disable the cost cap for the rest of the session. (QA gate finding.)
+ */
+export function safeTokenCount(n: unknown): number {
+  const num = typeof n === 'number' ? n : Number(n);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.floor(num);
+}
