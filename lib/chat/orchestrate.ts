@@ -4,7 +4,13 @@ import { baselineModel } from '../providers/catalog';
 import { route, MAX_OUTPUT_TOKENS } from '../router/router';
 import { buildReceipt, costOf, type Receipt } from '../cost/cost';
 import { estimateMessagesTokens, estimateTokens, safeTokenCount } from '../cost/tokens';
-import { getSessionSpend, addSessionSpend, sessionCapUsd } from '../cost/session';
+import {
+  getSessionSpend,
+  reserveSpend,
+  reconcileSpend,
+  releaseSpend,
+  sessionCapUsd,
+} from '../cost/session';
 
 /**
  * The one seam every surface calls: the chat API route AND the eval harness both
@@ -72,24 +78,33 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
 
   const messages: ChatMessage[] = [...history, { role: 'user', content: input.prompt }];
 
-  const gen = await provider.generate({
-    model: decision.model,
-    messages,
-    maxTokens: MAX_OUTPUT_TOKENS,
-  });
+  // Reserve the estimate BEFORE the await so a concurrent same-session turn can't
+  // pass the cap on a stale spend snapshot; reconcile to actual (or release) after.
+  const reserved = decision.estimatedCostUsd;
+  reserveSpend(input.sessionId, reserved);
 
-  const inputTokens = safeTokenCount(gen.inputTokens);
-  const outputTokens = safeTokenCount(gen.outputTokens);
+  let receipt: Receipt;
+  let gen;
+  try {
+    gen = await provider.generate({
+      model: decision.model,
+      messages,
+      maxTokens: MAX_OUTPUT_TOKENS,
+    });
+    receipt = buildReceipt({
+      model: decision.model,
+      baseline,
+      inputTokens: safeTokenCount(gen.inputTokens),
+      outputTokens: safeTokenCount(gen.outputTokens),
+      reason: decision.reason,
+    });
+    reconcileSpend(input.sessionId, reserved, receipt.costUsd);
+  } catch (err) {
+    releaseSpend(input.sessionId, reserved);
+    throw err;
+  }
 
-  const receipt = buildReceipt({
-    model: decision.model,
-    baseline,
-    inputTokens,
-    outputTokens,
-    reason: decision.reason,
-  });
-
-  const newSpent = addSessionSpend(input.sessionId, receipt.costUsd);
+  const newSpent = getSessionSpend(input.sessionId);
 
   return {
     blocked: false,
@@ -159,6 +174,10 @@ export async function council(input: {
     };
   }
 
+  // Reserve the members' projected cost BEFORE the fan-out await (closes the
+  // concurrent-council race), then reconcile to the actual survivors' cost.
+  reserveSpend(input.sessionId, memberProjected);
+
   // Fan out. allSettled so one flaky model doesn't discard the others' answers.
   const settled = await Promise.allSettled(
     catalog.map(async (model) => {
@@ -177,18 +196,23 @@ export async function council(input: {
     .filter((s): s is PromiseFulfilledResult<CouncilAnswer> => s.status === 'fulfilled')
     .map((s) => s.value);
 
+  const actualMemberCost = answers.reduce((s, a) => s + a.receipt.costUsd, 0);
+  reconcileSpend(input.sessionId, memberProjected, actualMemberCost);
+
   if (answers.length === 0) {
     return {
       blocked: true,
       answers: [],
-      session: { spentUsd, capUsd, remainingUsd },
+      session: {
+        spentUsd: round(getSessionSpend(input.sessionId), 8),
+        capUsd,
+        remainingUsd: round(Math.max(0, capUsd - getSessionSpend(input.sessionId)), 8),
+      },
       message: 'Every council model failed to answer — please retry.',
     };
   }
 
-  // Charge only the members that actually answered.
-  let newSpent = spentUsd;
-  for (const a of answers) newSpent = addSessionSpend(input.sessionId, a.receipt.costUsd);
+  let newSpent = getSessionSpend(input.sessionId);
 
   // Synthesis: gated on its ACTUAL fusion cost (not the pre-flight heuristic) so it can
   // never breach the cap, and wrapped so a synthesis failure never loses the answers
@@ -202,12 +226,15 @@ export async function council(input: {
     if (synthCostEst > remainingNow) {
       note = 'Synthesis skipped — it would exceed the remaining session budget. Showing the sources.';
     } else {
+      reserveSpend(input.sessionId, synthCostEst);
       try {
         synthesis = await synthesizeAnswers({ fusion, answers, provider, baseline });
-        newSpent = addSessionSpend(input.sessionId, synthesis.receipt.costUsd);
+        reconcileSpend(input.sessionId, synthCostEst, synthesis.receipt.costUsd);
       } catch {
+        releaseSpend(input.sessionId, synthCostEst);
         note = 'Synthesis failed — showing the sources. You were not charged for the synthesis.';
       }
+      newSpent = getSessionSpend(input.sessionId);
     }
   }
 

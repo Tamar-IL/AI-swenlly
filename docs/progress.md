@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 11 — Close the cost-cap TOCTOU (reserve-then-reconcile) (2026-08-16)
+- Fixed the confirmed money-guard race both gates flagged: concurrent same-session turns could each clear the cap on a stale spend snapshot. Added reserve/reconcile/release to the ledger; orchestrate() and council() now reserve the estimate SYNCHRONOUSLY before the model call (no await in between), then reconcile to actual or release on failure — so a concurrent turn sees the reservation and is gated correctly.
+- Single-process correctness; multi-instance still needs a shared store (task #10, unchanged).
+- Verified: 67 tests pass (was 64) incl. 3 new concurrency tests (double-clear blocked, exact ledger under parallel load, failed-call releases reservation); eval still 🟢 GO; build clean. Lesson logged.
+
 ## Chunk 10 — Proof gates on chunks 8-9 + fixes (2026-08-16)
 - Ran a focused gate pass (AI red team + code review) on the new markdown renderer + council synthesis. XSS guardrail held; they found real bugs, all now fixed with regression tests: markdown parser O(n^2) blowup (length-bounded the regexes), balanced-paren URLs truncated, protocol-relative `//evil.com` href bypass, and nested code-fence corruption (variable-length fences).
 - Council resilience: members now charged via allSettled (a flaky model no longer kills the council), synthesis is gated on its ACTUAL fusion cost and wrapped so a failure returns the paid-for answers without charge — closes the "cap is a hard ceiling" breach the red team found.

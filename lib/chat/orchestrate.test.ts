@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { orchestrate, council } from './orchestrate';
 import { MockProvider } from '../providers/mock';
 import { MOCK_CATALOG } from '../providers/catalog';
-import { resetAllSessions } from '../cost/session';
+import { resetAllSessions, getSessionSpend } from '../cost/session';
+import { route } from '../router/router';
 import type { GenerateRequest, ModelProvider } from '../providers/types';
 
 const provider = new MockProvider();
@@ -73,6 +74,54 @@ describe('orchestrate', () => {
     const r2 = await orchestrate({ prompt: 'analyze more tradeoffs in depth', sessionId: 's5', ...tight });
     expect(r2.blocked).toBe(true);
     expect(r2.message).toMatch(/cost cap/i);
+  });
+});
+
+describe('concurrency (reserve-then-reconcile closes the cap TOCTOU)', () => {
+  it('two concurrent same-session turns cannot both clear a one-turn cap', async () => {
+    // Single-model catalog so there's no cheaper tier to downgrade to; the gate uses
+    // the max-output ESTIMATE, so size the cap on that.
+    const strongOnly = MOCK_CATALOG.filter((m) => m.id === 'mock-strong');
+    const prompt = 'analyze microservices tradeoffs in depth';
+    const est = route({ prompt, catalog: strongOnly }).estimatedCostUsd;
+    const cap = est * 1.5; // affords one turn, not two
+    const [a, b] = await Promise.all([
+      orchestrate({ prompt, sessionId: 'race', provider, catalog: strongOnly, capUsd: cap }),
+      orchestrate({ prompt, sessionId: 'race', provider, catalog: strongOnly, capUsd: cap }),
+    ]);
+    const blocked = [a, b].filter((r) => r.blocked).length;
+    expect(blocked).toBe(1); // exactly one admitted, one gated — no double-clear
+    expect(getSessionSpend('race')).toBeLessThanOrEqual(cap + 1e-9);
+  });
+
+  it('ledger stays exact under concurrent turns (no lost updates)', async () => {
+    const n = 5;
+    const runs = await Promise.all(
+      Array.from({ length: n }, () =>
+        orchestrate({ prompt: 'write me a poem', sessionId: 'sum', provider, catalog: MOCK_CATALOG, capUsd: 100 }),
+      ),
+    );
+    const expected = runs.reduce((s, r) => s + (r.receipt?.costUsd ?? 0), 0);
+    // Read the ledger AFTER all reservations reconcile — equals the sum of actuals.
+    expect(getSessionSpend('sum')).toBeCloseTo(expected, 8);
+  });
+
+  it('a failed provider call releases its reservation (no phantom charge)', async () => {
+    const boom: ModelProvider = {
+      name: 'mock',
+      available: () => true,
+      models: () => MOCK_CATALOG,
+      generate: async () => {
+        throw new Error('provider down');
+      },
+    };
+    await expect(
+      orchestrate({ prompt: 'write me a poem', sessionId: 'rel', provider: boom, catalog: MOCK_CATALOG, capUsd: 1 }),
+    ).rejects.toThrow();
+    // Reservation released → a subsequent successful turn sees the full budget.
+    const ok = await orchestrate({ prompt: 'write me a poem', sessionId: 'rel', provider, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(ok.blocked).toBe(false);
+    expect(ok.session.spentUsd).toBeCloseTo(ok.receipt!.costUsd, 8);
   });
 });
 
