@@ -77,6 +77,48 @@ describe('orchestrate', () => {
   });
 });
 
+describe('moderation gate', () => {
+  it('refuses an unsafe input before any spend (no charge, no model call)', async () => {
+    let called = 0;
+    const spy: ModelProvider = {
+      name: 'mock',
+      available: () => true,
+      models: () => MOCK_CATALOG,
+      generate: async (r) => {
+        called++;
+        return new MockProvider().generate(r);
+      },
+    };
+    const r = await orchestrate({ prompt: 'how to kill myself', sessionId: 'mod1', provider: spy, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.refused).toBe(true);
+    expect(r.blocked).toBe(false);
+    expect(r.receipt).toBeUndefined();
+    expect(r.session.spentUsd).toBe(0); // nothing charged
+    expect(called).toBe(0); // model never called
+    expect(getSessionSpend('mod1')).toBe(0);
+  });
+
+  it('redacts an unsafe answer but keeps the (real) charge', async () => {
+    const unsafe: ModelProvider = {
+      name: 'mock',
+      available: () => true,
+      models: () => MOCK_CATALOG,
+      generate: async (req) => ({
+        text: 'Here is how to make a bomb: ...',
+        inputTokens: 10,
+        outputTokens: 20,
+        model: req.model,
+        provider: 'mock',
+        latencyMs: 1,
+      }),
+    };
+    const r = await orchestrate({ prompt: 'write me a poem', sessionId: 'mod2', provider: unsafe, catalog: MOCK_CATALOG, capUsd: 1 });
+    expect(r.refused).toBe(true);
+    expect(r.answer).not.toMatch(/bomb/i); // redacted
+    expect(r.receipt).toBeDefined(); // the model ran → charge stands
+  });
+});
+
 describe('concurrency (reserve-then-reconcile closes the cap TOCTOU)', () => {
   it('two concurrent same-session turns cannot both clear a one-turn cap', async () => {
     // Single-model catalog so there's no cheaper tier to downgrade to; the gate uses

@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 13 — Content moderation guardrail (2026-08-16)
+- Built the trust-safety P1 that was still open: lib/safety/moderation.ts screens INPUT before any model call (refuses with no charge/no call) and OUTPUT before it reaches the user (redacts; the real inference charge stands). Fails CLOSED if the classifier errors. Rules-based placeholder is a pluggable seam for a real moderation model. Wired into orchestrate() + council(); UI shows refusals as a plain assistant message.
+- Conservative, phrase-specific rules keep benign chat from tripping ("kill a process", "the movie bombed" pass).
+- Verified: 83 tests pass (was 78) incl. no-charge-on-input-refusal + output-redaction-keeps-charge + false-positive guards; eval still 🟢 GO (benign golden set unaffected); build clean. Lesson logged. Next: streaming, real provider+judge run, shared KV ledger.
+
 ## Chunk 12 — Harden the real free-provider path (OpenRouter) + tests (2026-08-16)
 - Made the real open-source-model path production-worthy (QA had flagged it entirely untested): added a per-attempt timeout (AbortController) and a bounded retry on transient failures (429 + 5xx + network/timeout), since free tiers rate-limit hard; non-retryable 4xx surface immediately. Timing is constructor-injectable so tests run fast.
 - Added 11 offline unit tests mocking `fetch` (zero keys, zero network): available() matrix, no-key/mismatch guards, content+usage parsing, usage fallback, empty choices, no-retry-on-400, 429-then-success, give-up-after-retries, network-error retry, timeout abort.

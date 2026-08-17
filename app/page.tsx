@@ -146,6 +146,11 @@ export default function Home() {
       const data = await res.json();
       if (data.blocked) {
         setCapped(data.message ?? 'Session cost cap reached.');
+      } else if (data.refused) {
+        setItems((prev) => [
+          ...prev,
+          { kind: 'msg', turn: { id: newId(), role: 'assistant', content: data.message ?? "I can't help with that request." } },
+        ]);
       } else if (data.answers?.length) {
         setItems((prev) => [...prev, { kind: 'council', id: newId(), answers: data.answers, synthesis: data.synthesis, note: data.message }]);
       }

@@ -11,6 +11,7 @@ import {
   releaseSpend,
   sessionCapUsd,
 } from '../cost/session';
+import { moderateInput, moderateOutput } from '../safety/moderation';
 
 /**
  * The one seam every surface calls: the chat API route AND the eval harness both
@@ -39,6 +40,8 @@ export interface OrchestrateResult {
   session: { spentUsd: number; capUsd: number; remainingUsd: number };
   /** User-facing message when blocked. */
   message?: string;
+  /** True when content moderation refused the input (no model called, no charge). */
+  refused?: boolean;
 }
 
 export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateResult> {
@@ -50,6 +53,18 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
 
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
+
+  // Content safety FIRST — refuse before any model call or spend.
+  const inMod = moderateInput(input.prompt);
+  if (!inMod.allowed) {
+    return {
+      blocked: false,
+      refused: true,
+      answer: inMod.reason,
+      message: inMod.reason,
+      session: { spentUsd, capUsd, remainingUsd },
+    };
+  }
 
   // Budget against the FULL billed context (history + prompt), not the prompt alone —
   // otherwise a caller could hide the workload in `history` and blow past the cap.
@@ -106,10 +121,16 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
 
   const newSpent = getSessionSpend(input.sessionId);
 
+  // Screen the answer before returning it. The model already ran, so the charge
+  // stands (honest), but unsafe content is replaced with a refusal.
+  const outMod = moderateOutput(gen.text);
+  const answer = outMod.allowed ? gen.text : (outMod.reason ?? "I can't share that answer.");
+
   return {
     blocked: false,
-    answer: gen.text,
+    answer,
     receipt,
+    refused: !outMod.allowed,
     session: {
       spentUsd: round(newSpent, 8),
       capUsd,
@@ -137,6 +158,8 @@ export interface CouncilResult {
   synthesis?: CouncilAnswer;
   session: { spentUsd: number; capUsd: number; remainingUsd: number };
   message?: string;
+  /** True when content moderation refused the input. */
+  refused?: boolean;
 }
 
 export async function council(input: {
@@ -159,6 +182,18 @@ export async function council(input: {
 
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
+
+  // Content safety first — refuse before any model call.
+  const inMod = moderateInput(input.prompt);
+  if (!inMod.allowed) {
+    return {
+      blocked: false,
+      refused: true,
+      answers: [],
+      message: inMod.reason,
+      session: { spentUsd, capUsd, remainingUsd },
+    };
+  }
 
   // Pre-flight: refuse if we can't even afford the N member calls (priced at max output).
   const inputTokens = estimateMessagesTokens(messages.map((m) => m.content));
