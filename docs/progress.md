@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 14 — Streaming responses (2026-08-16)
+- Added POST /api/chat/stream: runs the full engine (moderation → cap → route → generate → output moderation → charge) via orchestrate(), then delivers the answer progressively as newline-delimited JSON events (delta… then done with the receipt; blocked/error events too). Client reads the stream and renders the answer live with the blinking cursor, attaching the receipt on completion.
+- Reuses all existing logic (no duplicate accounting); true token-level streaming is a drop-in behind the same event shape once a streaming provider is wired. Honest limitation noted in code.
+- Verified: 86 tests pass (was 83) incl. a stream-route test (deltas→done+receipt, unsafe-input refusal, body validation); eval still 🟢 GO; build clean; curled the live endpoint to confirm progressive NDJSON. Next: real provider+judge run, shared KV ledger, a11y.
+
 ## Chunk 13 — Content moderation guardrail (2026-08-16)
 - Built the trust-safety P1 that was still open: lib/safety/moderation.ts screens INPUT before any model call (refuses with no charge/no call) and OUTPUT before it reaches the user (redacts; the real inference charge stands). Fails CLOSED if the classifier errors. Rules-based placeholder is a pluggable seam for a real moderation model. Wired into orchestrate() + council(); UI shows refusals as a plain assistant message.
 - Conservative, phrase-specific rules keep benign chat from tripping ("kill a process", "the movie bombed" pass).

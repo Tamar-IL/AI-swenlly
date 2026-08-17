@@ -88,32 +88,57 @@ export default function Home() {
     setBusy(true);
 
     try {
-      const res = await fetch('/api/chat', {
+      const res = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, sessionId, overrideModelId: override ?? undefined }),
       });
-      const data = await res.json();
 
-      if (data.blocked) {
-        // Remove the pending assistant bubble; surface the gate.
-        setItems((prev) => prev.filter((it) => !(it.kind === 'msg' && it.turn.id === pendingId)));
-        setCapped(data.message ?? 'Session cost cap reached.');
-        if (data.session) setSpent(data.session.spentUsd);
-        return;
-      }
+      if (!res.body) throw new Error('no stream');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let acc = '';
 
-      const receipt = data.receipt as ReceiptData;
-      setItems((prev) =>
-        prev.map((it) =>
-          it.kind === 'msg' && it.turn.id === pendingId
-            ? { kind: 'msg', turn: { ...it.turn, content: data.answer ?? '', receipt, pending: false } }
-            : it,
-        ),
-      );
-      if (data.session) {
-        setSpent(data.session.spentUsd);
-        setCap(data.session.capUsd);
+      const applyEvent = (evt: any) => {
+        if (evt.type === 'blocked') {
+          setItems((prev) => prev.filter((it) => !(it.kind === 'msg' && it.turn.id === pendingId)));
+          setCapped(evt.message ?? 'Session cost cap reached.');
+          if (evt.session) setSpent(evt.session.spentUsd);
+        } else if (evt.type === 'delta') {
+          acc += evt.text;
+          setItems((prev) =>
+            prev.map((it) =>
+              it.kind === 'msg' && it.turn.id === pendingId ? { kind: 'msg', turn: { ...it.turn, content: acc } } : it,
+            ),
+          );
+        } else if (evt.type === 'done') {
+          setItems((prev) =>
+            prev.map((it) =>
+              it.kind === 'msg' && it.turn.id === pendingId
+                ? { kind: 'msg', turn: { ...it.turn, content: acc, receipt: evt.receipt as ReceiptData, pending: false } }
+                : it,
+            ),
+          );
+          if (evt.session) {
+            setSpent(evt.session.spentUsd);
+            setCap(evt.session.capUsd);
+          }
+        } else if (evt.type === 'error') {
+          throw new Error(evt.message ?? 'stream error');
+        }
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (line) applyEvent(JSON.parse(line));
+        }
       }
     } catch {
       setItems((prev) =>
