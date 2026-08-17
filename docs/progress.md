@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 12 — Harden the real free-provider path (OpenRouter) + tests (2026-08-16)
+- Made the real open-source-model path production-worthy (QA had flagged it entirely untested): added a per-attempt timeout (AbortController) and a bounded retry on transient failures (429 + 5xx + network/timeout), since free tiers rate-limit hard; non-retryable 4xx surface immediately. Timing is constructor-injectable so tests run fast.
+- Added 11 offline unit tests mocking `fetch` (zero keys, zero network): available() matrix, no-key/mismatch guards, content+usage parsing, usage fallback, empty choices, no-retry-on-400, 429-then-success, give-up-after-retries, network-error retry, timeout abort.
+- Verified: 78 tests pass (was 67); eval still 🟢 GO; build clean. Next (task #10): real provider+judge eval run, streaming, moderation, shared KV ledger.
+
 ## Chunk 11 — Close the cost-cap TOCTOU (reserve-then-reconcile) (2026-08-16)
 - Fixed the confirmed money-guard race both gates flagged: concurrent same-session turns could each clear the cap on a stale spend snapshot. Added reserve/reconcile/release to the ledger; orchestrate() and council() now reserve the estimate SYNCHRONOUSLY before the model call (no await in between), then reconcile to actual or release on failure — so a concurrent turn sees the reservation and is gated correctly.
 - Single-process correctness; multi-instance still needs a shared store (task #10, unchanged).

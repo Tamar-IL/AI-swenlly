@@ -52,9 +52,18 @@ const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export class OpenRouterProvider implements ModelProvider {
   readonly name = 'openrouter';
   private readonly apiKey: string | undefined;
+  private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly retryBaseMs: number;
 
-  constructor(apiKey = process.env.OPENROUTER_API_KEY) {
+  constructor(
+    apiKey = process.env.OPENROUTER_API_KEY,
+    opts: { timeoutMs?: number; maxRetries?: number; retryBaseMs?: number } = {},
+  ) {
     this.apiKey = apiKey && apiKey.trim() ? apiKey.trim() : undefined;
+    this.timeoutMs = opts.timeoutMs ?? 30_000;
+    this.maxRetries = opts.maxRetries ?? 2;
+    this.retryBaseMs = opts.retryBaseMs ?? 400;
   }
 
   available(): boolean {
@@ -75,17 +84,10 @@ export class OpenRouterProvider implements ModelProvider {
     }
 
     const started = Date.now();
-    const res = await fetch(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: model.id,
-        messages,
-        max_tokens: maxTokens ?? 1024,
-      }),
+    const res = await this.fetchWithRetry({
+      model: model.id,
+      messages,
+      max_tokens: maxTokens ?? 1024,
     });
 
     if (!res.ok) {
@@ -112,4 +114,53 @@ export class OpenRouterProvider implements ModelProvider {
       latencyMs: Date.now() - started,
     };
   }
+
+  /**
+   * POST with a per-attempt timeout and a bounded retry on transient failures
+   * (429 + 5xx + network/timeout errors). OpenRouter's free tier rate-limits
+   * aggressively, so a single flaky response shouldn't fail the whole turn.
+   * Non-transient responses (e.g. 400/401/403) are returned as-is for the caller
+   * to surface — no point retrying an auth or bad-request error.
+   */
+  private async fetchWithRetry(body: unknown): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const res = await fetch(ENDPOINT, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (isTransient(res.status) && attempt < this.maxRetries) {
+          await sleep(this.retryBaseMs * 2 ** attempt);
+          continue;
+        }
+        return res;
+      } catch (err) {
+        clearTimeout(timer);
+        lastErr = err;
+        if (attempt < this.maxRetries) {
+          await sleep(this.retryBaseMs * 2 ** attempt);
+          continue;
+        }
+      }
+    }
+    throw new Error(`OpenRouter request failed after ${this.maxRetries + 1} attempts: ${String(lastErr)}`);
+  }
+}
+
+/** 429 (rate limit) and 5xx are worth retrying; 4xx (auth/bad request) are not. */
+function isTransient(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
