@@ -235,7 +235,14 @@ export default function Home() {
         </header>
 
         {/* Transcript */}
-        <div ref={transcriptRef} className="scroll-thin flex-1 overflow-y-auto">
+        <div
+          ref={transcriptRef}
+          className="scroll-thin flex-1 overflow-y-auto"
+          role="log"
+          aria-live="polite"
+          aria-atomic="false"
+          aria-label="Conversation"
+        >
           <div className={`mx-auto px-6 py-8 ${items.some((i) => i.kind === 'council') ? 'max-w-council' : 'max-w-column'}`}>
             {empty ? (
               <EmptyState onPick={(s) => send(s)} />
@@ -300,6 +307,7 @@ export default function Home() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 rows={1}
+                aria-label="Message the Conductor"
                 placeholder="Ask anything — the Conductor picks the right AI for it…"
                 className="max-h-[200px] w-full resize-none bg-transparent px-4 py-3.5 text-[16px] leading-[26px] text-text placeholder:text-text-muted focus:outline-none"
                 disabled={busy}

@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 16 — Accessibility audit (WCAG A/AA) (2026-08-16)
+- Ran a real axe-core audit (headless Chromium) across empty + active-conversation states in light AND dark: ZERO WCAG 2.1 A/AA violations — the design system's AA work holds up, now verified with a tool rather than asserted.
+- Added the two proactive wins static axe can't assert: the transcript is an aria-live="polite" role="log" region (screen readers announce streamed answers) and the composer textarea has an explicit aria-label. Committed a reusable `npm run a11y` audit script (scripts/a11y-audit.mjs; manual/dev — needs a running server + browser, not CI).
+- Verified: 94 tests pass; eval still 🟢 GO; build clean; re-audit after the changes still 0 violations. Next (task #10): real provider+judge run, shared KV ledger, stream cancellation.
+
 ## Chunk 15 — Proof gates on chunks 11-14 + fixes (2026-08-16)
 - Ran a focused gate pass (AI red team + code review) on streaming/moderation/ledger/retry. Transport, reserve-then-reconcile, and retry confirmed SOUND. Fixed the 3 real holes they found, each with a regression test: (F1) input moderation ignored `history` -> now screens the full billed context on chat/stream/council; (F2) council had NO output moderation -> now redacts every member answer + the synthesis; (#1) the client stream reader hung forever on a non-2xx response -> extracted a tested `consumeChatStream` that checks res.ok, surfaces errors, and flushes the tail.
 - Also added the missing res.ok check on the council path and a shared typed StreamEvent contract.
