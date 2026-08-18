@@ -54,6 +54,7 @@ export async function POST(req: Request) {
           sessionId,
           overrideModelId: typeof body?.overrideModelId === 'string' ? body.overrideModelId : undefined,
           history: validated.history,
+          signal: req.signal, // client disconnect cancels the in-flight model call
         });
 
         if (result.blocked) {

@@ -28,6 +28,7 @@ export class MockProvider implements ModelProvider {
 
   async generate(req: GenerateRequest): Promise<GenerateResult> {
     const { model, messages } = req;
+    if (req.signal?.aborted) throw new DOMException('aborted', 'AbortError');
     if (model.provider !== this.name) {
       throw new Error(`MockProvider cannot serve model "${model.id}" (provider=${model.provider})`);
     }

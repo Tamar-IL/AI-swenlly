@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 17 — Stream cancellation (AbortSignal end-to-end) (2026-08-16)
+- Closed the code-review gate's cost-hygiene finding: an abandoned request kept running and charging the model. Threaded AbortSignal from the stream route (req.signal, fires on client disconnect) → orchestrate() → provider.generate(). OpenRouter combines it with the per-attempt timeout (AbortSignal.any) and never retries a caller cancellation; Mock honors it too. On abort, generate throws and the existing catch RELEASES the reservation — no phantom charge.
+- Verified: 96 tests pass (was 94) incl. "caller-aborted turn releases its reservation, spend stays 0" and "OpenRouter does not retry a cancellation"; eval still 🟢 GO; build clean. (Observable only with a real/slow provider; the mock is instant.)
+- Remaining (task #10) is now resource-gated: real provider + LLM-judge run (needs a free key), and a shared async KV ledger for multi-instance (a real rearchitecture, not a drop-in).
+
 ## Chunk 16 — Accessibility audit (WCAG A/AA) (2026-08-16)
 - Ran a real axe-core audit (headless Chromium) across empty + active-conversation states in light AND dark: ZERO WCAG 2.1 A/AA violations — the design system's AA work holds up, now verified with a tool rather than asserted.
 - Added the two proactive wins static axe can't assert: the transcript is an aria-live="polite" role="log" region (screen readers announce streamed answers) and the composer textarea has an explicit aria-label. Committed a reusable `npm run a11y` audit script (scripts/a11y-audit.mjs; manual/dev — needs a running server + browser, not CI).

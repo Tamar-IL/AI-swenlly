@@ -29,6 +29,8 @@ export interface OrchestrateInput {
   provider?: ModelProvider;
   catalog?: ModelInfo[];
   capUsd?: number;
+  /** Cancels the in-flight model call (e.g. the client disconnected). */
+  signal?: AbortSignal;
 }
 
 export interface OrchestrateResult {
@@ -106,6 +108,7 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
       model: decision.model,
       messages,
       maxTokens: MAX_OUTPUT_TOKENS,
+      signal: input.signal,
     });
     receipt = buildReceipt({
       model: decision.model,

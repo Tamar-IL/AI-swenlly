@@ -101,6 +101,16 @@ describe('OpenRouterProvider.generate errors + retries', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('does NOT retry a caller cancellation (aborts immediately)', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError'));
+    global.fetch = fetchMock;
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(fastProvider({ maxRetries: 2 }).generate({ ...req(), signal: ctrl.signal })).rejects.toThrow();
+    // Pre-aborted → never even attempts the fetch.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('aborts on timeout and fails after retries', async () => {
     // fetch that never resolves until its abort signal fires.
     global.fetch = vi.fn((_url: any, init: any) =>

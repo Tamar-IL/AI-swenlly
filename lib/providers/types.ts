@@ -46,6 +46,9 @@ export interface GenerateRequest {
   messages: ChatMessage[];
   /** Soft cap on output tokens. Providers may approximate. */
   maxTokens?: number;
+  /** Aborts an in-flight call (e.g. the client disconnected) so we don't keep
+   *  spending on an answer nobody will read. Providers should honour it. */
+  signal?: AbortSignal;
 }
 
 export interface GenerateResult {

@@ -84,11 +84,14 @@ export class OpenRouterProvider implements ModelProvider {
     }
 
     const started = Date.now();
-    const res = await this.fetchWithRetry({
-      model: model.id,
-      messages,
-      max_tokens: maxTokens ?? 1024,
-    });
+    const res = await this.fetchWithRetry(
+      {
+        model: model.id,
+        messages,
+        max_tokens: maxTokens ?? 1024,
+      },
+      req.signal,
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -122,11 +125,14 @@ export class OpenRouterProvider implements ModelProvider {
    * Non-transient responses (e.g. 400/401/403) are returned as-is for the caller
    * to surface — no point retrying an auth or bad-request error.
    */
-  private async fetchWithRetry(body: unknown): Promise<Response> {
+  private async fetchWithRetry(body: unknown, external?: AbortSignal): Promise<Response> {
+    if (external?.aborted) throw new DOMException('aborted', 'AbortError');
     let lastErr: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      // Abort on EITHER our per-attempt timeout OR the caller's cancellation.
+      const signal = external ? AbortSignal.any([controller.signal, external]) : controller.signal;
       try {
         const res = await fetch(ENDPOINT, {
           method: 'POST',
@@ -135,7 +141,7 @@ export class OpenRouterProvider implements ModelProvider {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
-          signal: controller.signal,
+          signal,
         });
         clearTimeout(timer);
         if (isTransient(res.status) && attempt < this.maxRetries) {
@@ -146,6 +152,8 @@ export class OpenRouterProvider implements ModelProvider {
       } catch (err) {
         clearTimeout(timer);
         lastErr = err;
+        // A caller cancellation is final — never retry it (only timeouts/network do).
+        if (external?.aborted) throw new DOMException('aborted', 'AbortError');
         if (attempt < this.maxRetries) {
           await sleep(this.retryBaseMs * 2 ** attempt);
           continue;

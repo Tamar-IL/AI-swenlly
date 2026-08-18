@@ -172,6 +172,15 @@ describe('concurrency (reserve-then-reconcile closes the cap TOCTOU)', () => {
     expect(getSessionSpend('sum')).toBeCloseTo(expected, 8);
   });
 
+  it('a caller-aborted turn releases its reservation and never finalizes (cancellation)', async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(
+      orchestrate({ prompt: 'write me a poem', sessionId: 'cancel', provider, catalog: MOCK_CATALOG, capUsd: 1, signal: ctrl.signal }),
+    ).rejects.toThrow();
+    expect(getSessionSpend('cancel')).toBe(0); // reservation released, no charge
+  });
+
   it('a failed provider call releases its reservation (no phantom charge)', async () => {
     const boom: ModelProvider = {
       name: 'mock',
