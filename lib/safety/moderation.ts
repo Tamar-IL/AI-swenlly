@@ -68,6 +68,19 @@ export function moderateInput(text: string): ModerationVerdict {
   return safeModerate(text);
 }
 
+/**
+ * Screen the FULL billed context, not just the latest prompt — a disallowed payload
+ * hidden in prior `history` turns still reaches the model, so it must be checked too.
+ * Returns the first refusal, or allowed.
+ */
+export function moderateInputs(texts: string[]): ModerationVerdict {
+  for (const t of texts) {
+    const v = safeModerate(t);
+    if (!v.allowed) return v;
+  }
+  return ALLOWED;
+}
+
 /** Screen a model's answer before it reaches the user. */
 export function moderateOutput(text: string): ModerationVerdict {
   return safeModerate(text);

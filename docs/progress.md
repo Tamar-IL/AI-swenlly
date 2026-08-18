@@ -4,6 +4,11 @@ Append a 3-line note after each chunk (newest at top). Every chunk is committed 
 
 ---
 
+## Chunk 15 — Proof gates on chunks 11-14 + fixes (2026-08-16)
+- Ran a focused gate pass (AI red team + code review) on streaming/moderation/ledger/retry. Transport, reserve-then-reconcile, and retry confirmed SOUND. Fixed the 3 real holes they found, each with a regression test: (F1) input moderation ignored `history` -> now screens the full billed context on chat/stream/council; (F2) council had NO output moderation -> now redacts every member answer + the synthesis; (#1) the client stream reader hung forever on a non-2xx response -> extracted a tested `consumeChatStream` that checks res.ok, surfaces errors, and flushes the tail.
+- Also added the missing res.ok check on the council path and a shared typed StreamEvent contract.
+- Verified: 94 tests pass (was 86); eval still 🟢 GO; build clean. 3 lessons logged. Deferred (task #10): stream cancellation/AbortSignal, provider-side retry idempotency (paid only).
+
 ## Chunk 14 — Streaming responses (2026-08-16)
 - Added POST /api/chat/stream: runs the full engine (moderation → cap → route → generate → output moderation → charge) via orchestrate(), then delivers the answer progressively as newline-delimited JSON events (delta… then done with the receipt; blocked/error events too). Client reads the stream and renders the answer live with the blinking cursor, attaching the receipt on completion.
 - Reuses all existing logic (no duplicate accounting); true token-level streaming is a drop-in behind the same event shape once a streaming provider is wired. Honest limitation noted in code.

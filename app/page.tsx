@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ModelInfo } from '@/lib/providers/types';
 import type { Receipt as ReceiptData } from '@/lib/cost/cost';
+import { consumeChatStream } from '@/lib/chat/stream-client';
 import { Message, type ChatTurn } from '@/components/Message';
 import { Council, type CouncilAnswer } from '@/components/Council';
 import { ScopeControl } from '@/components/ScopeControl';
@@ -94,52 +95,35 @@ export default function Home() {
         body: JSON.stringify({ prompt, sessionId, overrideModelId: override ?? undefined }),
       });
 
-      if (!res.body) throw new Error('no stream');
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
       let acc = '';
+      const setPending = (patch: Partial<ChatTurn>) =>
+        setItems((prev) =>
+          prev.map((it) =>
+            it.kind === 'msg' && it.turn.id === pendingId ? { kind: 'msg', turn: { ...it.turn, ...patch } } : it,
+          ),
+        );
 
-      const applyEvent = (evt: any) => {
-        if (evt.type === 'blocked') {
-          setItems((prev) => prev.filter((it) => !(it.kind === 'msg' && it.turn.id === pendingId)));
-          setCapped(evt.message ?? 'Session cost cap reached.');
-          if (evt.session) setSpent(evt.session.spentUsd);
-        } else if (evt.type === 'delta') {
-          acc += evt.text;
-          setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'msg' && it.turn.id === pendingId ? { kind: 'msg', turn: { ...it.turn, content: acc } } : it,
-            ),
-          );
-        } else if (evt.type === 'done') {
-          setItems((prev) =>
-            prev.map((it) =>
-              it.kind === 'msg' && it.turn.id === pendingId
-                ? { kind: 'msg', turn: { ...it.turn, content: acc, receipt: evt.receipt as ReceiptData, pending: false } }
-                : it,
-            ),
-          );
-          if (evt.session) {
-            setSpent(evt.session.spentUsd);
-            setCap(evt.session.capUsd);
+      await consumeChatStream(res, {
+        onDelta: (text) => {
+          acc += text;
+          setPending({ content: acc });
+        },
+        onDone: (e) => {
+          setPending({ content: acc, receipt: e.receipt as ReceiptData | undefined, pending: false });
+          if (e.session) {
+            setSpent(e.session.spentUsd);
+            setCap(e.session.capUsd);
           }
-        } else if (evt.type === 'error') {
-          throw new Error(evt.message ?? 'stream error');
-        }
-      };
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (line) applyEvent(JSON.parse(line));
-        }
-      }
+        },
+        onBlocked: (e) => {
+          setItems((prev) => prev.filter((it) => !(it.kind === 'msg' && it.turn.id === pendingId)));
+          setCapped(e.message ?? 'Session cost cap reached.');
+          if (e.session) setSpent(e.session.spentUsd);
+        },
+        onError: (message) => {
+          setPending({ content: `⚠️ ${message}`, pending: false });
+        },
+      });
     } catch {
       setItems((prev) =>
         prev.map((it) =>
@@ -168,6 +152,10 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, sessionId }),
       });
+      if (!res.ok) {
+        setCapped(`Council request failed (${res.status}). Please retry.`);
+        return;
+      }
       const data = await res.json();
       if (data.blocked) {
         setCapped(data.message ?? 'Session cost cap reached.');

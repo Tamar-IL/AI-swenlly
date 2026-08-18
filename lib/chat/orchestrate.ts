@@ -11,7 +11,7 @@ import {
   releaseSpend,
   sessionCapUsd,
 } from '../cost/session';
-import { moderateInput, moderateOutput } from '../safety/moderation';
+import { moderateInputs, moderateOutput } from '../safety/moderation';
 
 /**
  * The one seam every surface calls: the chat API route AND the eval harness both
@@ -54,8 +54,9 @@ export async function orchestrate(input: OrchestrateInput): Promise<OrchestrateR
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
 
-  // Content safety FIRST — refuse before any model call or spend.
-  const inMod = moderateInput(input.prompt);
+  // Content safety FIRST — refuse before any model call or spend. Screen the FULL
+  // billed context (history + prompt), not just the latest turn.
+  const inMod = moderateInputs([...history.map((m) => m.content), input.prompt]);
   if (!inMod.allowed) {
     return {
       blocked: false,
@@ -183,8 +184,8 @@ export async function council(input: {
   const spentUsd = getSessionSpend(input.sessionId);
   const remainingUsd = Math.max(0, capUsd - spentUsd);
 
-  // Content safety first — refuse before any model call.
-  const inMod = moderateInput(input.prompt);
+  // Content safety first — refuse before any model call. Screen the full context.
+  const inMod = moderateInputs([...history.map((m) => m.content), input.prompt]);
   if (!inMod.allowed) {
     return {
       blocked: false,
@@ -229,7 +230,8 @@ export async function council(input: {
   );
   const answers: CouncilAnswer[] = settled
     .filter((s): s is PromiseFulfilledResult<CouncilAnswer> => s.status === 'fulfilled')
-    .map((s) => s.value);
+    .map((s) => s.value)
+    .map(redactUnsafe); // output moderation on every member answer
 
   const actualMemberCost = answers.reduce((s, a) => s + a.receipt.costUsd, 0);
   reconcileSpend(input.sessionId, memberProjected, actualMemberCost);
@@ -263,7 +265,7 @@ export async function council(input: {
     } else {
       reserveSpend(input.sessionId, synthCostEst);
       try {
-        synthesis = await synthesizeAnswers({ fusion, answers, provider, baseline });
+        synthesis = redactUnsafe(await synthesizeAnswers({ fusion, answers, provider, baseline }));
         reconcileSpend(input.sessionId, synthCostEst, synthesis.receipt.costUsd);
       } catch {
         releaseSpend(input.sessionId, synthCostEst);
@@ -291,6 +293,13 @@ export async function council(input: {
  * produces one consolidated answer. Offline the aggregator is the Mock; with a real
  * provider it genuinely fuses. Its cost is a real receipt charged to the session.
  */
+/** Output moderation for a council answer: redact the text on refusal, keep the
+ *  receipt (the model ran, so the charge stands — same policy as the single path). */
+function redactUnsafe(a: CouncilAnswer): CouncilAnswer {
+  const v = moderateOutput(a.answer);
+  return v.allowed ? a : { ...a, answer: v.reason ?? "I can't share that answer." };
+}
+
 function buildFusionPrompt(prompt: string, answers: CouncilAnswer[]): string {
   return (
     `Synthesize the single best answer to: "${prompt}"\n\n` +
